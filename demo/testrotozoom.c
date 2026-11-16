@@ -53,7 +53,7 @@ void RotatePicture(SDL_Surface *picture, int rotate, int flip, int smooth, int p
 {
 	SDL_Surface *rotozoom_picture;
 	SDL_Texture *rotozoom_texture;
-	SDL_Rect dest;
+	SDL_Rect dest = {0, 0, 0, 0};
 	SDL_FRect fdest;
 	int framecount, framemax, frameinc;
 	double angle = 0.0, zoomf = 1.0, zoomfx = 1.0, zoomfy = 1.0;
@@ -233,7 +233,7 @@ void ZoomPicture(SDL_Surface *picture, int smooth)
 {
 	SDL_Surface *rotozoom_picture;
 	SDL_Texture *rotozoom_texture;
-	SDL_Rect dest;
+	SDL_Rect dest = {0, 0, 0, 0};
 	SDL_FRect fdest;
 	int framecount, framemax, frameinc;
 	double zoomxf, zoomyf;
@@ -296,7 +296,7 @@ void RotatePicture90Degrees(SDL_Surface *picture)
 {
 	SDL_Surface *rotozoom_picture;
 	SDL_Texture *rotozoom_texture;
-	SDL_Rect dest;
+	SDL_Rect dest = {0, 0, 0, 0};
 	SDL_FRect fdest;
 	int framecount, framemax, frameinc;
 	int numClockwiseTurns;
@@ -365,7 +365,7 @@ void CustomTest(SDL_Surface *picture, double a, double x, double y, int smooth)
 {
 	SDL_Surface *rotozoom_picture;
 	SDL_Texture *rotozoom_texture;
-	SDL_Rect dest;
+	SDL_Rect dest = {0, 0, 0, 0};
 	SDL_FRect fdest;
 	SDL_Renderer *renderer = state->renderers[0];
 
