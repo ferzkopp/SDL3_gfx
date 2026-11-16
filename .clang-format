@@ -1,0 +1,25 @@
+# Code style for SDL2_gfx: tab indentation, Linux/K&R braces (function braces on their own line),
+# existing line breaks preserved (ColumnLimit 0). Apply with scripts/format.ps1 or scripts/format.sh.
+BasedOnStyle: LLVM
+UseTab: ForContinuationAndIndentation
+IndentWidth: 4
+TabWidth: 4
+ContinuationIndentWidth: 4
+BreakBeforeBraces: Linux
+ColumnLimit: 0
+SortIncludes: Never
+PointerAlignment: Right
+SpaceBeforeParens: ControlStatements
+IndentCaseLabels: true
+IndentExternBlock: Indent
+IndentPPDirectives: None
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Always
+AlignConsecutiveMacros: Consecutive
+AlignTrailingComments: false
+AlignAfterOpenBracket: DontAlign
+AlignOperands: DontAlign
+ReflowComments: false
+MaxEmptyLinesToKeep: 3

@@ -1,0 +1,3 @@
+# Files excluded from clang-format (also honored by scripts/format.*):
+# generated font bitmap table
+SDL3_gfxPrimitives_font.h

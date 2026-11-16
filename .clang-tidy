@@ -1,0 +1,26 @@
+# clang-tidy checks used by scripts/analyze.*. Noisy style checks that would flag the established
+# public API (e.g. leading-underscore internal helpers, Sint16 arithmetic narrowing) are disabled
+# here and tracked in docs/CODE_REVIEW.md instead.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-reserved-identifier,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-assignment-in-if-condition,
+  -bugprone-signed-bitwise,
+  cert-*,
+  -cert-dcl37-c,
+  -cert-dcl51-cpp,
+  -cert-err33-c,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  misc-redundant-expression,
+  performance-*,
+  portability-*,
+  readability-misleading-indentation,
+  readability-redundant-control-flow,
+  readability-duplicate-include
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*SDL3_(gfxPrimitives|rotozoom|framerate|imageFilter)\.h$'
