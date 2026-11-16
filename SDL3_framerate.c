@@ -27,6 +27,11 @@ Andreas Schiffler -- aschiffler at ferzkopp dot net
 
 */
 
+/*!
+\file SDL3_framerate.c
+\brief Implementation of the framerate manager.
+*/
+
 #include "SDL3_framerate.h"
 
 /*!
@@ -34,7 +39,7 @@ Andreas Schiffler -- aschiffler at ferzkopp dot net
 
 \return The tick count.
 */
-Uint64 _getTicks()
+static Uint64 _getTicks(void)
 {
 	Uint64 ticks = SDL_GetTicks();
 
@@ -59,17 +64,20 @@ reset delay interpolation.
 
 \param manager Pointer to the framerate manager.
 */
-void SDL_initFramerate(FPSmanager * manager)
+void SDL_initFramerate(FPSmanager *manager)
 {
+	if (manager == NULL) {
+		return;
+	}
+
 	/*
 	* Store some sane values 
 	*/
 	manager->framecount = 0;
 	manager->rate = FPS_DEFAULT;
-	manager->rateticks = (1000.0f / (float) FPS_DEFAULT);
+	manager->rateticks = (1000.0f / (float)FPS_DEFAULT);
 	manager->baseticks = _getTicks();
 	manager->lastticks = manager->baseticks;
-
 }
 
 /*!
@@ -83,12 +91,15 @@ Rate values must be between FPS_LOWER_LIMIT and FPS_UPPER_LIMIT inclusive to be 
 
 \return 0 for sucess and -1 for error.
 */
-int SDL_setFramerate(FPSmanager * manager, Uint32 rate)
+int SDL_setFramerate(FPSmanager *manager, Uint32 rate)
 {
+	if (manager == NULL) {
+		return (-1);
+	}
 	if ((rate >= FPS_LOWER_LIMIT) && (rate <= FPS_UPPER_LIMIT)) {
 		manager->framecount = 0;
 		manager->rate = rate;
-		manager->rateticks = (1000.0f / (float) rate);
+		manager->rateticks = (1000.0f / (float)rate);
 		return (0);
 	} else {
 		return (-1);
@@ -104,7 +115,7 @@ Get the currently set framerate of the manager.
 
 \return Current framerate in Hz or -1 for error.
 */
-int SDL_getFramerate(FPSmanager * manager)
+int SDL_getFramerate(FPSmanager *manager)
 {
 	if (manager == NULL) {
 		return (-1);
@@ -123,7 +134,7 @@ A frame is counted each time SDL_framerateDelay is called.
 
 \return Current frame count or -1 for error.
 */
-int SDL_getFramecount(FPSmanager * manager)
+int SDL_getFramecount(FPSmanager *manager)
 {
 	if (manager == NULL) {
 		return (-1);
@@ -131,6 +142,11 @@ int SDL_getFramecount(FPSmanager * manager)
 		return ((int)manager->framecount);
 	}
 }
+
+/*!
+\brief Number of frames after which SDL_framerateDelay moves baseticks forward (about 9.7 hours at 30 Hz).
+*/
+#define FPS_REBASE_FRAMES (1u << 20)
 
 /*!
 \brief Delay execution to maintain a constant framerate and calculate fps.
@@ -143,12 +159,12 @@ drawing too slow), the delay is zero and the delay interpolation is reset.
 
 \return The time that passed since the last call to the function in ms. May return 0.
 */
-Uint64 SDL_framerateDelay(FPSmanager * manager)
+Uint32 SDL_framerateDelay(FPSmanager *manager)
 {
 	Uint64 current_ticks;
 	Uint64 target_ticks;
-	Uint64 the_delay;
-	Uint64 time_passed = 0;
+	Sint64 the_delay;
+	Uint32 time_passed = 0;
 
 	/*
 	* No manager, no delay
@@ -173,13 +189,19 @@ Uint64 SDL_framerateDelay(FPSmanager * manager)
 	* Get/calc ticks 
 	*/
 	current_ticks = _getTicks();
-	time_passed = current_ticks - manager->lastticks;
+	time_passed = (Uint32)(current_ticks - manager->lastticks);
 	manager->lastticks = current_ticks;
-	target_ticks = manager->baseticks + (Uint64) ((float) manager->framecount * manager->rateticks);
+	/* double: a float product loses precision after a few hours of frames (FRM-002) */
+	target_ticks = manager->baseticks + (Uint64)((double)manager->framecount * (double)manager->rateticks);
 
-	if (current_ticks <= target_ticks) {
-		the_delay = target_ticks - current_ticks;
-		SDL_Delay(the_delay);
+	the_delay = (Sint64)(target_ticks - current_ticks);
+	if (the_delay >= 0) {
+		SDL_Delay((Uint32)the_delay);
+		/* Rebase regularly so that the frame count and the offset from baseticks stay small */
+		if (manager->framecount >= FPS_REBASE_FRAMES) {
+			manager->baseticks = (target_ticks != 0) ? target_ticks : 1;
+			manager->framecount = 0;
+		}
 	} else {
 		manager->framecount = 0;
 		manager->baseticks = _getTicks();

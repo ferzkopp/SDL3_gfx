@@ -27,6 +27,11 @@ Andreas Schiffler -- aschiffler at ferzkopp dot net
 
 */
 
+/*!
+\file SDL3_rotozoom.h
+\brief Rotation, zooming, shrinking and 90 degree rotation of SDL_Surfaces (32-bit RGBA and 8-bit palette).
+*/
+
 #ifndef _SDL3_rotozoom_h
 #define _SDL3_rotozoom_h
 
@@ -38,7 +43,7 @@ extern "C" {
 #endif
 
 #ifndef M_PI
-#define M_PI	3.1415926535897932384626433832795
+#define M_PI 3.1415926535897932384626433832795 /*!< Pi, if not defined by math.h. */
 #endif
 
 #include <SDL3/SDL.h>
@@ -48,26 +53,28 @@ extern "C" {
 	/*!
 	\brief Disable anti-aliasing (no smoothing).
 	*/
-#define SMOOTHING_OFF		0
+#define SMOOTHING_OFF 0
 
 	/*!
 	\brief Enable anti-aliasing (smoothing).
 	*/
-#define SMOOTHING_ON		1
+#define SMOOTHING_ON 1
 
 	/* ---- Function Prototypes */
 
-#ifdef _MSC_VER
-#  if defined(DLL_EXPORT) && !defined(LIBSDL3_GFX_DLL_IMPORT)
-#    define SDL3_ROTOZOOM_SCOPE __declspec(dllexport)
-#  else
-#    ifdef LIBSDL3_GFX_DLL_IMPORT
-#      define SDL3_ROTOZOOM_SCOPE __declspec(dllimport)
-#    endif
-#  endif
+/* Windows (MSVC, MinGW, Cygwin): export when building the DLL, import with LIBSDL3_GFX_DLL_IMPORT.
+   GCC/clang: the library is built with hidden visibility; only these functions are exported (BLD-001). */
+#if defined(_WIN32) || defined(__CYGWIN__)
+#if defined(DLL_EXPORT) && !defined(LIBSDL3_GFX_DLL_IMPORT)
+#define SDL3_ROTOZOOM_SCOPE __declspec(dllexport)
+#elif defined(LIBSDL3_GFX_DLL_IMPORT)
+#define SDL3_ROTOZOOM_SCOPE __declspec(dllimport)
+#endif
+#elif defined(__GNUC__) && (__GNUC__ >= 4)
+#define SDL3_ROTOZOOM_SCOPE __attribute__((visibility("default")))
 #endif
 #ifndef SDL3_ROTOZOOM_SCOPE
-#  define SDL3_ROTOZOOM_SCOPE extern
+#define SDL3_ROTOZOOM_SCOPE extern
 #endif
 
 	/* 
@@ -76,17 +83,15 @@ extern "C" {
 
 	*/
 
-	SDL3_ROTOZOOM_SCOPE SDL_Surface *rotozoomSurface(SDL_Surface * src, double angle, double zoom, int smooth);
+	SDL3_ROTOZOOM_SCOPE SDL_Surface *rotozoomSurface(SDL_Surface *src, double angle, double zoom, int smooth);
 
-	SDL3_ROTOZOOM_SCOPE SDL_Surface *rotozoomSurfaceXY
-		(SDL_Surface * src, double angle, double zoomx, double zoomy, int smooth);
+	SDL3_ROTOZOOM_SCOPE SDL_Surface *rotozoomSurfaceXY(SDL_Surface *src, double angle, double zoomx, double zoomy, int smooth);
 
 
 	SDL3_ROTOZOOM_SCOPE void rotozoomSurfaceSize(int width, int height, double angle, double zoom, int *dstwidth,
 		int *dstheight);
 
-	SDL3_ROTOZOOM_SCOPE void rotozoomSurfaceSizeXY
-		(int width, int height, double angle, double zoomx, double zoomy, 
+	SDL3_ROTOZOOM_SCOPE void rotozoomSurfaceSizeXY(int width, int height, double angle, double zoomx, double zoomy,
 		int *dstwidth, int *dstheight);
 
 	/* 
@@ -95,7 +100,7 @@ extern "C" {
 
 	*/
 
-	SDL3_ROTOZOOM_SCOPE SDL_Surface *zoomSurface(SDL_Surface * src, double zoomx, double zoomy, int smooth);
+	SDL3_ROTOZOOM_SCOPE SDL_Surface *zoomSurface(SDL_Surface *src, double zoomx, double zoomy, int smooth);
 
 	SDL3_ROTOZOOM_SCOPE void zoomSurfaceSize(int width, int height, double zoomx, double zoomy, int *dstwidth, int *dstheight);
 
@@ -103,9 +108,9 @@ extern "C" {
 
 	Shrinking functions
 
-	*/     
+	*/
 
-	SDL3_ROTOZOOM_SCOPE SDL_Surface *shrinkSurface(SDL_Surface * src, int factorx, int factory);
+	SDL3_ROTOZOOM_SCOPE SDL_Surface *shrinkSurface(SDL_Surface *src, int factorx, int factory);
 
 	/* 
 
@@ -113,11 +118,11 @@ extern "C" {
 
 	*/
 
-	SDL3_ROTOZOOM_SCOPE SDL_Surface* rotateSurface90Degrees(SDL_Surface* src, int numClockwiseTurns);
+	SDL3_ROTOZOOM_SCOPE SDL_Surface *rotateSurface90Degrees(SDL_Surface *src, int numClockwiseTurns);
 
 	/* Ends C function definitions when using C++ */
 #ifdef __cplusplus
 }
 #endif
 
-#endif				/* _SDL3_rotozoom_h */
+#endif /* _SDL3_rotozoom_h */

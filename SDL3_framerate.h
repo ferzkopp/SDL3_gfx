@@ -27,6 +27,11 @@ Andreas Schiffler -- aschiffler at ferzkopp dot net
 
 */
 
+/*!
+\file SDL3_framerate.h
+\brief Framerate manager: delays the render loop to a fixed frame rate.
+*/
+
 #ifndef _SDL3_framerate_h
 #define _SDL3_framerate_h
 
@@ -44,51 +49,53 @@ extern "C" {
 	/*!
 	\brief Highest possible rate supported by framerate controller in Hz (1/s).
 	*/
-#define FPS_UPPER_LIMIT		200
+#define FPS_UPPER_LIMIT 200
 
 	/*!
 	\brief Lowest possible rate supported by framerate controller in Hz (1/s).
 	*/
-#define FPS_LOWER_LIMIT		1
+#define FPS_LOWER_LIMIT 1
 
 	/*!
 	\brief Default rate of framerate controller in Hz (1/s).
 	*/
-#define FPS_DEFAULT		30
+#define FPS_DEFAULT 30
 
 	/*! 
 	\brief Structure holding the state and timing information of the framerate controller. 
 	*/
 	typedef struct {
-		Uint32 framecount;
-		float rateticks;
-		Uint64 baseticks;
-		Uint64 lastticks;
-		Uint32 rate;
+		Uint32 framecount; /*!< Frames since baseticks (reset when the rate changes or a frame is late). */
+		float rateticks; /*!< Duration of a frame in ms (1000 / rate). */
+		Uint64 baseticks; /*!< Tick count (SDL_GetTicks, ms) at frame 0; 0 means not initialized. */
+		Uint64 lastticks; /*!< Tick count of the previous SDL_framerateDelay call. */
+		Uint32 rate; /*!< Target framerate in Hz (FPS_LOWER_LIMIT to FPS_UPPER_LIMIT). */
 	} FPSmanager;
 
 	/* ---- Function Prototypes */
 
-#ifdef _MSC_VER
-#  if defined(DLL_EXPORT) && !defined(LIBSDL3_GFX_DLL_IMPORT)
-#    define SDL3_FRAMERATE_SCOPE __declspec(dllexport)
-#  else
-#    ifdef LIBSDL3_GFX_DLL_IMPORT
-#      define SDL3_FRAMERATE_SCOPE __declspec(dllimport)
-#    endif
-#  endif
+/* Windows (MSVC, MinGW, Cygwin): export when building the DLL, import with LIBSDL3_GFX_DLL_IMPORT.
+   GCC/clang: the library is built with hidden visibility; only these functions are exported (BLD-001). */
+#if defined(_WIN32) || defined(__CYGWIN__)
+#if defined(DLL_EXPORT) && !defined(LIBSDL3_GFX_DLL_IMPORT)
+#define SDL3_FRAMERATE_SCOPE __declspec(dllexport)
+#elif defined(LIBSDL3_GFX_DLL_IMPORT)
+#define SDL3_FRAMERATE_SCOPE __declspec(dllimport)
+#endif
+#elif defined(__GNUC__) && (__GNUC__ >= 4)
+#define SDL3_FRAMERATE_SCOPE __attribute__((visibility("default")))
 #endif
 #ifndef SDL3_FRAMERATE_SCOPE
-#  define SDL3_FRAMERATE_SCOPE extern
+#define SDL3_FRAMERATE_SCOPE extern
 #endif
 
 	/* Functions return 0 or value for sucess and -1 for error */
 
-	SDL3_FRAMERATE_SCOPE void SDL_initFramerate(FPSmanager * manager);
-	SDL3_FRAMERATE_SCOPE int SDL_setFramerate(FPSmanager * manager, Uint32 rate);
-	SDL3_FRAMERATE_SCOPE int SDL_getFramerate(FPSmanager * manager);
-	SDL3_FRAMERATE_SCOPE int SDL_getFramecount(FPSmanager * manager);
-	SDL3_FRAMERATE_SCOPE Uint64 SDL_framerateDelay(FPSmanager * manager);
+	SDL3_FRAMERATE_SCOPE void SDL_initFramerate(FPSmanager *manager);
+	SDL3_FRAMERATE_SCOPE int SDL_setFramerate(FPSmanager *manager, Uint32 rate);
+	SDL3_FRAMERATE_SCOPE int SDL_getFramerate(FPSmanager *manager);
+	SDL3_FRAMERATE_SCOPE int SDL_getFramecount(FPSmanager *manager);
+	SDL3_FRAMERATE_SCOPE Uint32 SDL_framerateDelay(FPSmanager *manager);
 
 	/* --- */
 
@@ -97,4 +104,4 @@ extern "C" {
 }
 #endif
 
-#endif				/* _SDL3_framerate_h */
+#endif /* _SDL3_framerate_h */

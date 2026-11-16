@@ -1,0 +1,37 @@
+@PACKAGE_INIT@
+
+# SDL3_gfx CMake package
+#
+#   find_package(SDL3_gfx REQUIRED)
+#   target_link_libraries(app PRIVATE SDL3_gfx::SDL3_gfx)
+#
+# Imported targets (depending on how SDL3_gfx was built):
+#   SDL3_gfx::SDL3_gfx-shared  shared library
+#   SDL3_gfx::SDL3_gfx-static  static library
+#   SDL3_gfx::SDL3_gfx         the shared library if installed, otherwise the static library
+#
+# Headers: #include <SDL3_gfx/SDL3_gfxPrimitives.h> (the SDL3_gfx folder is also on the include path).
+
+include(CMakeFindDependencyMacro)
+if("@SDL3_FOUND@")
+    find_dependency(SDL3 @SDL3GFX_SDL_REQUIRED_VERSION@ CONFIG)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/SDL3_gfxTargets.cmake")
+
+if(NOT TARGET SDL3_gfx::SDL3_gfx)
+    if(TARGET SDL3_gfx::SDL3_gfx-shared)
+        set(_sdl3gfx_default SDL3_gfx::SDL3_gfx-shared)
+    else()
+        set(_sdl3gfx_default SDL3_gfx::SDL3_gfx-static)
+    endif()
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.18)
+        add_library(SDL3_gfx::SDL3_gfx ALIAS ${_sdl3gfx_default})
+    else()
+        add_library(SDL3_gfx::SDL3_gfx INTERFACE IMPORTED)
+        set_target_properties(SDL3_gfx::SDL3_gfx PROPERTIES INTERFACE_LINK_LIBRARIES ${_sdl3gfx_default})
+    endif()
+    unset(_sdl3gfx_default)
+endif()
+
+check_required_components(SDL3_gfx)

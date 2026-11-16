@@ -27,6 +27,11 @@ Andreas Schiffler -- aschiffler at ferzkopp dot net
 
 */
 
+/*!
+\file SDL3_gfxPrimitives.c
+\brief Implementation of the graphics primitives.
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -36,8 +41,63 @@ Andreas Schiffler -- aschiffler at ferzkopp dot net
 #include "SDL3_rotozoom.h"
 #include "SDL3_gfxPrimitives_font.h"
 
+/* Decoding of the Uint32 color argument of the ...Color functions: 0xRRGGBBAA as documented.
+   Up to version 1.0.4 the color was decoded from its bytes in memory order, i.e. 0xAABBGGRR on
+   little-endian machines (finding API-001); define SDL3_GFX_LEGACY_COLOR_BYTE_ORDER (CMake option
+   SDL3GFX_LEGACY_COLOR_BYTE_ORDER) to restore that behavior. */
+#ifdef SDL3_GFX_LEGACY_COLOR_BYTE_ORDER
+#define GFX_COLOR_BYTE(color, i) (((const Uint8 *)&(color))[i])
+#define GFX_COLOR_R(color)       GFX_COLOR_BYTE(color, 0)
+#define GFX_COLOR_G(color)       GFX_COLOR_BYTE(color, 1)
+#define GFX_COLOR_B(color)       GFX_COLOR_BYTE(color, 2)
+#define GFX_COLOR_A(color)       GFX_COLOR_BYTE(color, 3)
+#else
+#define GFX_COLOR_R(color) ((Uint8)((color) >> 24)) /*!< Red component of a 0xRRGGBBAA color. */
+#define GFX_COLOR_G(color) ((Uint8)((color) >> 16)) /*!< Green component of a 0xRRGGBBAA color. */
+#define GFX_COLOR_B(color) ((Uint8)((color) >> 8)) /*!< Blue component of a 0xRRGGBBAA color. */
+#define GFX_COLOR_A(color) ((Uint8)(color)) /*!< Alpha component of a 0xRRGGBBAA color. */
+#endif
+
+/*! \brief Maps the bool result of an SDL3 function to the 0 (success) / -1 (error) convention of this API. */
+#define GFX_RESULT(call) ((call) ? 0 : -1)
+
+/* ---- Structures */
+
+/*!
+\brief The structure passed to the internal Bresenham iterator.
+*/
+typedef struct {
+	Sint16 x, y;
+	int dx, dy, s1, s2, swapdir, error;
+	Uint32 count;
+} SDL3_gfxBresenhamIterator;
+
+/*!
+\brief The structure passed to the internal Murphy iterator.
+*/
+typedef struct {
+	SDL_Renderer *renderer;
+	int u, v; /* delta x , delta y */
+	int ku, kt, kv, kd; /* loop constants */
+	int oct2;
+	int quad4;
+	Sint16 last1x, last1y, last2x, last2y, first1x, first1y, first2x, first2y, tempx, tempy;
+} SDL3_gfxMurphyIterator;
+
 /* ---- Pixel */
 
+/*!
+\brief Internal function to draw a line; a single point is drawn as a point.
+
+SDL3's software renderer draws nothing for a zero-length line when blending (PRIM-015).
+*/
+static int _gfxDrawLine(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2)
+{
+	if ((x1 == x2) && (y1 == y2)) {
+		return GFX_RESULT(SDL_RenderPoint(renderer, x1, y1));
+	}
+	return GFX_RESULT(SDL_RenderLine(renderer, x1, y1, x2, y2));
+}
 /*!
 \brief Draw pixel  in currently set color.
 
@@ -45,11 +105,11 @@ Andreas Schiffler -- aschiffler at ferzkopp dot net
 \param x X (horizontal) coordinate of the pixel.
 \param y Y (vertical) coordinate of the pixel.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool pixel(SDL_Renderer *renderer, float x, float y)
+static int pixel(SDL_Renderer *renderer, Sint16 x, Sint16 y)
 {
-	return SDL_RenderPoint(renderer, x, y);
+	return GFX_RESULT(SDL_RenderPoint(renderer, x, y));
 }
 
 /*!
@@ -60,12 +120,11 @@ bool pixel(SDL_Renderer *renderer, float x, float y)
 \param y Y (vertical) coordinate of the pixel.
 \param color The color value of the pixel to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool pixelColor(SDL_Renderer * renderer, float x, float y, Uint32 color)
+int pixelColor(SDL_Renderer *renderer, Sint16 x, Sint16 y, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return pixelRGBA(renderer, x, y, c[0], c[1], c[2], c[3]);
+	return pixelRGBA(renderer, x, y, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -79,14 +138,14 @@ bool pixelColor(SDL_Renderer * renderer, float x, float y, Uint32 color)
 \param b The blue color value of the pixel to draw.
 \param a The alpha value of the pixel to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool pixelRGBA(SDL_Renderer * renderer, float x, float y, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int pixelRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	bool result = true;
-	result &= SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
-	result &= SDL_SetRenderDrawColor(renderer, r, g, b, a);
-	result &= SDL_RenderPoint(renderer, x, y);
+	int result = 0;
+	result |= GFX_RESULT(SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND));
+	result |= GFX_RESULT(SDL_SetRenderDrawColor(renderer, r, g, b, a));
+	result |= GFX_RESULT(SDL_RenderPoint(renderer, x, y));
 	return result;
 }
 
@@ -102,9 +161,9 @@ bool pixelRGBA(SDL_Renderer * renderer, float x, float y, Uint8 r, Uint8 g, Uint
 \param a The alpha value of the pixel to draw.
 \param weight The weight multiplied into the alpha value of the pixel.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool pixelRGBAWeight(SDL_Renderer * renderer, float x, float y, Uint8 r, Uint8 g, Uint8 b, Uint8 a, Uint32 weight)
+static int pixelRGBAWeight(SDL_Renderer *renderer, Sint16 x, Sint16 y, Uint8 r, Uint8 g, Uint8 b, Uint8 a, Uint32 weight)
 {
 	/*
 	* Modify Alpha by weight 
@@ -130,11 +189,11 @@ bool pixelRGBAWeight(SDL_Renderer * renderer, float x, float y, Uint8 r, Uint8 g
 \param x2 X coordinate of the second point (i.e. right) of the line.
 \param y Y coordinate of the points of the line.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool hline(SDL_Renderer * renderer, float x1, float x2, float y)
+static int hline(SDL_Renderer *renderer, Sint16 x1, Sint16 x2, Sint16 y)
 {
-	return SDL_RenderLine(renderer, x1, y, x2, y);;
+	return _gfxDrawLine(renderer, x1, y, x2, y);
 }
 
 
@@ -147,12 +206,11 @@ bool hline(SDL_Renderer * renderer, float x1, float x2, float y)
 \param y Y coordinate of the points of the line.
 \param color The color value of the line to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool hlineColor(SDL_Renderer * renderer, float x1, float x2, float y, Uint32 color)
+int hlineColor(SDL_Renderer *renderer, Sint16 x1, Sint16 x2, Sint16 y, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return hlineRGBA(renderer, x1, x2, y, c[0], c[1], c[2], c[3]);
+	return hlineRGBA(renderer, x1, x2, y, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -167,14 +225,14 @@ bool hlineColor(SDL_Renderer * renderer, float x1, float x2, float y, Uint32 col
 \param b The blue value of the line to draw. 
 \param a The alpha value of the line to draw. 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool hlineRGBA(SDL_Renderer * renderer, float x1, float x2, float y, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int hlineRGBA(SDL_Renderer *renderer, Sint16 x1, Sint16 x2, Sint16 y, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	bool result = true;
-	result &= SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
-	result &= SDL_SetRenderDrawColor(renderer, r, g, b, a);
-	result &= SDL_RenderLine(renderer, x1, y, x2, y);
+	int result = 0;
+	result |= GFX_RESULT(SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND));
+	result |= GFX_RESULT(SDL_SetRenderDrawColor(renderer, r, g, b, a));
+	result |= _gfxDrawLine(renderer, x1, y, x2, y);
 	return result;
 }
 
@@ -188,11 +246,11 @@ bool hlineRGBA(SDL_Renderer * renderer, float x1, float x2, float y, Uint8 r, Ui
 \param y1 Y coordinate of the first point (i.e. top) of the line.
 \param y2 Y coordinate of the second point (i.e. bottom) of the line.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool vline(SDL_Renderer * renderer, float x, float y1, float y2)
+static int vline(SDL_Renderer *renderer, Sint16 x, Sint16 y1, Sint16 y2)
 {
-	return SDL_RenderLine(renderer, x, y1, x, y2);;
+	return _gfxDrawLine(renderer, x, y1, x, y2);
 }
 
 /*!
@@ -204,12 +262,11 @@ bool vline(SDL_Renderer * renderer, float x, float y1, float y2)
 \param y2 Y coordinate of the second point (i.e. bottom) of the line.
 \param color The color value of the line to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool vlineColor(SDL_Renderer * renderer, float x, float y1, float y2, Uint32 color)
+int vlineColor(SDL_Renderer *renderer, Sint16 x, Sint16 y1, Sint16 y2, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return vlineRGBA(renderer, x, y1, y2, c[0], c[1], c[2], c[3]);
+	return vlineRGBA(renderer, x, y1, y2, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -224,17 +281,301 @@ bool vlineColor(SDL_Renderer * renderer, float x, float y1, float y2, Uint32 col
 \param b The blue value of the line to draw. 
 \param a The alpha value of the line to draw. 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool vlineRGBA(SDL_Renderer * renderer, float x, float y1, float y2, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int vlineRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y1, Sint16 y2, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	bool result = true;
-	result &= SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
-	result &= SDL_SetRenderDrawColor(renderer, r, g, b, a);
-	result &= SDL_RenderLine(renderer, x, y1, x, y2);
+	int result = 0;
+	result |= GFX_RESULT(SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND));
+	result |= GFX_RESULT(SDL_SetRenderDrawColor(renderer, r, g, b, a));
+	result |= _gfxDrawLine(renderer, x, y1, x, y2);
 	return result;
 }
 
+/* ---- Draw call batching (PERF-002) */
+
+/*!
+\brief Hint to control how anti-aliased pixels are drawn: "1" as SDL_RenderGeometry quads (one draw call per batch),
+"0" as individual points. Default: quads for hardware renderers, points for the software renderer (where geometry
+is slower and rounds differently). Mainly for testing.
+*/
+#define SDL3_GFX_HINT_AA_GEOMETRY "SDL3_GFX_AA_GEOMETRY"
+
+#define GFX_BATCH_POINTS 256 /*!< Capacity of a batch for points. */
+#define GFX_BATCH_RECTS  128 /*!< Capacity of a batch for spans (rectangles). */
+#define GFX_BATCH_QUADS  64 /*!< Capacity of a batch for anti-aliased pixel quads. */
+
+#define GFX_BATCH_NONE  0 /*!< Batch kind: empty. */
+#define GFX_BATCH_POINT 1 /*!< Batch kind: points. */
+#define GFX_BATCH_RECT  2 /*!< Batch kind: spans (rectangles). */
+#define GFX_BATCH_QUAD  3 /*!< Batch kind: anti-aliased pixel quads (geometry). */
+#define GFX_BATCH_PIXEL 4 /*!< Batch kind: anti-aliased pixels drawn immediately (software renderer). */
+
+/*!
+\brief Collects the points, spans and anti-aliased pixels of one primitive and draws them with few SDL calls.
+
+Only one kind of item is pending at a time and the batch is flushed whenever the kind changes, so the
+drawing order (which matters for overlapping blended pixels) is the same as with individual calls.
+*/
+typedef struct {
+	SDL_Renderer *renderer;
+	int result;
+	Uint8 r, g, b, a;
+	int kind;
+	int count;
+	int software; /* software renderer; -1: not determined yet */
+	int geometry; /* AA pixels as quads; -1: not decided yet */
+	int colorSet; /* draw color and blend mode of the primitive are set on the renderer */
+	union {
+		SDL_FPoint points[GFX_BATCH_POINTS];
+		SDL_FRect rects[GFX_BATCH_RECTS];
+		struct {
+			float xy[GFX_BATCH_QUADS * 8];
+			SDL_FColor colors[GFX_BATCH_QUADS * 4];
+		} quads;
+	} items;
+} GFX_Batch;
+
+/*!
+\brief Internal function to start a batch for a primitive drawn in the given color.
+
+Sets the draw color and blend mode like the unbatched primitives did.
+*/
+static void _gfxBatchBegin(GFX_Batch *batch, SDL_Renderer *renderer, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+{
+	batch->renderer = renderer;
+	batch->r = r;
+	batch->g = g;
+	batch->b = b;
+	batch->a = a;
+	batch->kind = GFX_BATCH_NONE;
+	batch->count = 0;
+	batch->software = -1;
+	batch->geometry = -1;
+	batch->result = 0;
+	batch->result |= GFX_RESULT(SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND));
+	batch->result |= GFX_RESULT(SDL_SetRenderDrawColor(renderer, r, g, b, a));
+	batch->colorSet = 1;
+}
+
+/*!
+\brief Internal function to determine (once per batch) whether the renderer is SDL's software renderer.
+*/
+static int _gfxBatchIsSoftware(GFX_Batch *batch)
+{
+	const char *name;
+
+	if (batch->software < 0) {
+		name = SDL_GetRendererName(batch->renderer);
+		batch->software = (name != NULL) && (SDL_strcmp(name, SDL_SOFTWARE_RENDERER) == 0);
+	}
+	return batch->software;
+}
+/*!
+\brief Internal function to draw the pending items of a batch.
+
+Spans are drawn as one SDL_RenderFillRects call, except for horizontal spans on the software renderer
+where drawing a line is much cheaper than SDL_RenderFillRect.
+*/
+static void _gfxBatchFlush(GFX_Batch *batch)
+{
+	int i, n;
+	Uint16 indices[GFX_BATCH_QUADS * 6];
+
+	if (batch->count == 0) {
+		return;
+	}
+	if ((batch->kind != GFX_BATCH_QUAD) && !batch->colorSet) {
+		batch->result |= GFX_RESULT(SDL_SetRenderDrawBlendMode(batch->renderer, (batch->a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND));
+		batch->result |= GFX_RESULT(SDL_SetRenderDrawColor(batch->renderer, batch->r, batch->g, batch->b, batch->a));
+		batch->colorSet = 1;
+	}
+	switch (batch->kind) {
+		case GFX_BATCH_POINT:
+			batch->result |= GFX_RESULT(SDL_RenderPoints(batch->renderer, batch->items.points, batch->count));
+			break;
+		case GFX_BATCH_RECT:
+			if (_gfxBatchIsSoftware(batch)) {
+				/* All items have the same color, so drawing them in another order gives the same result */
+				n = 0;
+				for (i = 0; i < batch->count; i++) {
+					const SDL_FRect *rect = &batch->items.rects[i];
+					if (rect->h == 1.0f) {
+						batch->result |= _gfxDrawLine(batch->renderer, (Sint16)rect->x, (Sint16)rect->y, (Sint16)(rect->x + rect->w - 1.0f), (Sint16)rect->y);
+					} else {
+						batch->items.rects[n++] = *rect;
+					}
+				}
+				if (n > 0) {
+					batch->result |= GFX_RESULT(SDL_RenderFillRects(batch->renderer, batch->items.rects, n));
+				}
+			} else {
+				batch->result |= GFX_RESULT(SDL_RenderFillRects(batch->renderer, batch->items.rects, batch->count));
+			}
+			break;
+		case GFX_BATCH_QUAD:
+			for (i = 0; i < batch->count; i++) {
+				indices[i * 6 + 0] = (Uint16)(i * 4 + 0);
+				indices[i * 6 + 1] = (Uint16)(i * 4 + 1);
+				indices[i * 6 + 2] = (Uint16)(i * 4 + 2);
+				indices[i * 6 + 3] = (Uint16)(i * 4 + 0);
+				indices[i * 6 + 4] = (Uint16)(i * 4 + 2);
+				indices[i * 6 + 5] = (Uint16)(i * 4 + 3);
+			}
+			batch->result |= GFX_RESULT(SDL_SetRenderDrawBlendMode(batch->renderer, SDL_BLENDMODE_BLEND));
+			batch->colorSet = 0;
+			batch->result |= GFX_RESULT(SDL_RenderGeometryRaw(batch->renderer, NULL, batch->items.quads.xy, 2 * sizeof(float), batch->items.quads.colors,
+				sizeof(SDL_FColor), NULL, 0, batch->count * 4, indices, batch->count * 6, sizeof(Uint16)));
+			break;
+		default:
+			break;
+	}
+	batch->count = 0;
+}
+
+/*!
+\brief Internal function to flush a batch if it holds items of another kind or is full.
+*/
+static void _gfxBatchPrepare(GFX_Batch *batch, int kind, int capacity)
+{
+	if ((batch->kind != kind) || (batch->count >= capacity)) {
+		_gfxBatchFlush(batch);
+		batch->kind = kind;
+	}
+}
+
+/*!
+\brief Internal function to finish a batch.
+
+\returns Returns 0 on success, -1 if any SDL call failed.
+*/
+static int _gfxBatchEnd(GFX_Batch *batch)
+{
+	_gfxBatchFlush(batch);
+	return (batch->result);
+}
+
+/*!
+\brief Internal function to add a point to a batch.
+*/
+static void _gfxBatchPoint(GFX_Batch *batch, Sint16 x, Sint16 y)
+{
+	_gfxBatchPrepare(batch, GFX_BATCH_POINT, GFX_BATCH_POINTS);
+	batch->items.points[batch->count].x = (float)x;
+	batch->items.points[batch->count].y = (float)y;
+	batch->count++;
+}
+
+/*!
+\brief Internal function to add a rectangle (left, top, width, height) to a batch.
+*/
+static void _gfxBatchRect(GFX_Batch *batch, int x, int y, int w, int h)
+{
+	_gfxBatchPrepare(batch, GFX_BATCH_RECT, GFX_BATCH_RECTS);
+	batch->items.rects[batch->count].x = (float)x;
+	batch->items.rects[batch->count].y = (float)y;
+	batch->items.rects[batch->count].w = (float)w;
+	batch->items.rects[batch->count].h = (float)h;
+	batch->count++;
+}
+
+/*!
+\brief Internal function to add a horizontal line (both endpoints included) to a batch.
+*/
+static void _gfxBatchHLine(GFX_Batch *batch, Sint16 x1, Sint16 x2, Sint16 y)
+{
+	if (x1 <= x2) {
+		_gfxBatchRect(batch, x1, y, x2 - x1 + 1, 1);
+	} else {
+		_gfxBatchRect(batch, x2, y, x1 - x2 + 1, 1);
+	}
+}
+
+/*!
+\brief Internal function to add a vertical line (both endpoints included) to a batch.
+*/
+static void _gfxBatchVLine(GFX_Batch *batch, Sint16 x, Sint16 y1, Sint16 y2)
+{
+	if (y1 <= y2) {
+		_gfxBatchRect(batch, x, y1, 1, y2 - y1 + 1);
+	} else {
+		_gfxBatchRect(batch, x, y2, 1, y1 - y2 + 1);
+	}
+}
+
+/*!
+\brief Internal function to decide whether anti-aliased pixels are drawn as geometry.
+*/
+static int _gfxBatchUseGeometry(GFX_Batch *batch)
+{
+	const char *hint = SDL_GetHint(SDL3_GFX_HINT_AA_GEOMETRY);
+
+	if ((hint != NULL) && (*hint != '\0')) {
+		return (SDL_atoi(hint) != 0);
+	}
+	return !_gfxBatchIsSoftware(batch);
+}
+/*!
+\brief Internal function to add an anti-aliased pixel with the given alpha to a batch.
+
+Hardware renderers get one colored quad per pixel; the software renderer draws the pixel right away
+like pixelRGBA. Fully transparent pixels do not change the target and are skipped.
+*/
+static void _gfxBatchPixelAlpha(GFX_Batch *batch, Sint16 x, Sint16 y, Uint8 alpha)
+{
+	int i;
+	float *xy;
+	SDL_FColor color;
+	SDL_FColor *colors;
+
+	if (alpha == 0) {
+		return;
+	}
+	if (batch->geometry < 0) {
+		batch->geometry = _gfxBatchUseGeometry(batch);
+	}
+	if (!batch->geometry) {
+		/* Same result as pixelRGBA: blending with alpha 255 replaces the pixel like SDL_BLENDMODE_NONE */
+		if (batch->kind != GFX_BATCH_PIXEL) {
+			_gfxBatchFlush(batch);
+			batch->kind = GFX_BATCH_PIXEL;
+			batch->result |= GFX_RESULT(SDL_SetRenderDrawBlendMode(batch->renderer, SDL_BLENDMODE_BLEND));
+			batch->colorSet = 0;
+		}
+		batch->result |= GFX_RESULT(SDL_SetRenderDrawColor(batch->renderer, batch->r, batch->g, batch->b, alpha));
+		batch->result |= GFX_RESULT(SDL_RenderPoint(batch->renderer, x, y));
+		return;
+	}
+	_gfxBatchPrepare(batch, GFX_BATCH_QUAD, GFX_BATCH_QUADS);
+	xy = &batch->items.quads.xy[batch->count * 8];
+	xy[0] = (float)x;
+	xy[1] = (float)y;
+	xy[2] = (float)x + 1.0f;
+	xy[3] = (float)y;
+	xy[4] = (float)x + 1.0f;
+	xy[5] = (float)y + 1.0f;
+	xy[6] = (float)x;
+	xy[7] = (float)y + 1.0f;
+	color.r = (float)batch->r / 255.0f;
+	color.g = (float)batch->g / 255.0f;
+	color.b = (float)batch->b / 255.0f;
+	color.a = (float)alpha / 255.0f;
+	colors = &batch->items.quads.colors[batch->count * 4];
+	for (i = 0; i < 4; i++) {
+		colors[i] = color;
+	}
+	batch->count++;
+}
+
+/*!
+\brief Internal function to add an anti-aliased pixel with the alpha of the primitive scaled by weight (0..255) to a batch.
+*/
+static void _gfxBatchPixelWeight(GFX_Batch *batch, Sint16 x, Sint16 y, Uint32 weight)
+{
+	Uint32 ax = ((Uint32)batch->a * weight) >> 8;
+
+	_gfxBatchPixelAlpha(batch, x, y, (ax > 255) ? 255 : (Uint8)ax);
+}
 /* ---- Rectangle */
 
 /*!
@@ -247,12 +588,11 @@ bool vlineRGBA(SDL_Renderer * renderer, float x, float y1, float y2, Uint8 r, Ui
 \param y2 Y coordinate of the second point (i.e. bottom left) of the rectangle.
 \param color The color value of the rectangle to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool rectangleColor(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, Uint32 color)
+int rectangleColor(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return rectangleRGBA(renderer, x1, y1, x2, y2, c[0], c[1], c[2], c[3]);
+	return rectangleRGBA(renderer, x1, y1, x2, y2, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -268,12 +608,12 @@ bool rectangleColor(SDL_Renderer * renderer, float x1, float y1, float x2, float
 \param b The blue value of the rectangle to draw. 
 \param a The alpha value of the rectangle to draw. 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool rectangleRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int rectangleRGBA(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	bool result;
-	float tmp;
+	int result;
+	Sint16 tmp;
 	SDL_FRect rect;
 
 	/*
@@ -311,19 +651,19 @@ bool rectangleRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float 
 
 	/* 
 	* Create destination rect
-	*/	
-	rect.x = x1;
-	rect.y = y1;
-	rect.w = x2 - x1;
-	rect.h = y2 - y1;
-	
+	*/
+	rect.x = (float)x1;
+	rect.y = (float)y1;
+	rect.w = (float)(x2 - x1);
+	rect.h = (float)(y2 - y1);
+
 	/*
 	* Draw
 	*/
-	result = true;
-	result &= SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
-	result &= SDL_SetRenderDrawColor(renderer, r, g, b, a);	
-	result &= SDL_RenderRect(renderer, &rect);
+	result = 0;
+	result |= GFX_RESULT(SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND));
+	result |= GFX_RESULT(SDL_SetRenderDrawColor(renderer, r, g, b, a));
+	result |= GFX_RESULT(SDL_RenderRect(renderer, &rect));
 	return result;
 }
 
@@ -340,14 +680,23 @@ bool rectangleRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float 
 \param rad The radius of the corner arc.
 \param color The color value of the rectangle to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool roundedRectangleColor(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, float rad, Uint32 color)
+int roundedRectangleColor(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Sint16 rad, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return roundedRectangleRGBA(renderer, x1, y1, x2, y2, rad, c[0], c[1], c[2], c[3]);
+	return roundedRectangleRGBA(renderer, x1, y1, x2, y2, rad, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
+/*!
+\brief Internal function to plot the point (dx, dy), dx and dy > 0, in the four corners of a rounded rectangle.
+*/
+static void _roundedCorners(GFX_Batch *batch, Sint16 xx1, Sint16 yy1, Sint16 xx2, Sint16 yy2, Sint16 dx, Sint16 dy)
+{
+	_gfxBatchPoint(batch, (Sint16)(xx1 - dx), (Sint16)(yy1 - dy));
+	_gfxBatchPoint(batch, (Sint16)(xx2 + dx), (Sint16)(yy1 - dy));
+	_gfxBatchPoint(batch, (Sint16)(xx1 - dx), (Sint16)(yy2 + dy));
+	_gfxBatchPoint(batch, (Sint16)(xx2 + dx), (Sint16)(yy2 + dy));
+}
 /*!
 \brief Draw rounded-corner rectangle with blending.
 
@@ -362,29 +711,30 @@ bool roundedRectangleColor(SDL_Renderer * renderer, float x1, float y1, float x2
 \param b The blue value of the rectangle to draw. 
 \param a The alpha value of the rectangle to draw. 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool roundedRectangleRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, float rad, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int roundedRectangleRGBA(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Sint16 rad, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	Sint32 result = 0;
-	float tmp;
-	float w, h;
-	float xx1, xx2;
-	float yy1, yy2;
+	int result = 0;
+	Sint16 tmp;
+	Sint16 w, h;
+	Sint16 xx1, xx2;
+	Sint16 yy1, yy2;
+	Sint16 cx, cy, df, d_e, d_se;
+	GFX_Batch batch;
 
 	/*
 	* Check renderer
 	*/
-	if (renderer == NULL)
-	{
-		return false;
+	if (renderer == NULL) {
+		return -1;
 	}
 
 	/*
 	* Check radius vor valid range
 	*/
 	if (rad < 0) {
-		return false;
+		return -1;
 	}
 
 	/*
@@ -436,40 +786,57 @@ bool roundedRectangleRGBA(SDL_Renderer * renderer, float x1, float y1, float x2,
 	/*
 	* Maybe adjust radius
 	*/
-	if ((rad * 2) > w)  
-	{
-		rad = (Sint32) w / 2;
+	if ((rad * 2) > w) {
+		rad = w / 2;
 	}
-	if ((rad * 2) > h)
-	{
-		rad = (Sint32) h / 2;
+	if ((rad * 2) > h) {
+		rad = h / 2;
 	}
 
 	/*
-	* Draw corners
+	* Draw corners: quarter circles (midpoint algorithm) around the corner centers. Every pixel is
+	* drawn once; the points on the axes belong to the straight edges (PRIM-016).
 	*/
 	xx1 = x1 + rad;
 	xx2 = x2 - rad;
 	yy1 = y1 + rad;
 	yy2 = y2 - rad;
-	result &= arcRGBA(renderer, xx1, yy1, rad, 180, 270, r, g, b, a);
-	result &= arcRGBA(renderer, xx2, yy1, rad, 270, 360, r, g, b, a);
-	result &= arcRGBA(renderer, xx1, yy2, rad,  90, 180, r, g, b, a);
-	result &= arcRGBA(renderer, xx2, yy2, rad,   0,  90, r, g, b, a);
+	_gfxBatchBegin(&batch, renderer, r, g, b, a);
+	result |= batch.result;
+	cx = 0;
+	cy = rad;
+	df = 1 - rad;
+	d_e = 3;
+	d_se = -2 * rad + 5;
+	do {
+		if (cx > 0) {
+			_roundedCorners(&batch, xx1, yy1, xx2, yy2, cx, cy);
+			if (cx != cy) {
+				_roundedCorners(&batch, xx1, yy1, xx2, yy2, cy, cx);
+			}
+		}
+		if (df < 0) {
+			df += d_e;
+			d_e += 2;
+			d_se += 2;
+		} else {
+			df += d_se;
+			d_e += 2;
+			d_se += 4;
+			cy--;
+		}
+		cx++;
+	} while (cx <= cy);
 
 	/*
 	* Draw lines
 	*/
-	if (xx1 <= xx2) {
-		result &= hlineRGBA(renderer, xx1, xx2, y1, r, g, b, a);
-		result &= hlineRGBA(renderer, xx1, xx2, y2, r, g, b, a);
-	}
-	if (yy1 <= yy2) {
-		result &= vlineRGBA(renderer, x1, yy1, yy2, r, g, b, a);
-		result &= vlineRGBA(renderer, x2, yy1, yy2, r, g, b, a);
-	}
+	_gfxBatchHLine(&batch, xx1, xx2, y1);
+	_gfxBatchHLine(&batch, xx1, xx2, y2);
+	_gfxBatchVLine(&batch, x1, yy1, yy2);
+	_gfxBatchVLine(&batch, x2, yy1, yy2);
 
-	return result;
+	return (result | _gfxBatchEnd(&batch));
 }
 
 /* ---- Rounded Box */
@@ -485,12 +852,11 @@ bool roundedRectangleRGBA(SDL_Renderer * renderer, float x1, float y1, float x2,
 \param rad The radius of the corner arcs of the box.
 \param color The color value of the box to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool roundedBoxColor(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, float rad, Uint32 color)
+int roundedBoxColor(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Sint16 rad, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return roundedBoxRGBA(renderer, x1, y1, x2, y2, rad, c[0], c[1], c[2], c[3]);
+	return roundedBoxRGBA(renderer, x1, y1, x2, y2, rad, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -507,37 +873,31 @@ bool roundedBoxColor(SDL_Renderer * renderer, float x1, float y1, float x2, floa
 \param b The blue value of the box to draw. 
 \param a The alpha value of the box to draw. 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool roundedBoxRGBA(SDL_Renderer * renderer, float x1, float y1, float x2,
-	float y2, float rad, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int roundedBoxRGBA(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2,
+	Sint16 y2, Sint16 rad, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	bool result;
-	float w, h, r2, tmp;
-	float cx = 0;
-	float cy = rad;
-	float ocx = (float) 0xffff;
-	float ocy = (float) 0xffff;
-	float df = 1 - rad;
-	float d_e = 3;
-	float d_se = -2 * rad + 5;
-	float xpcx, xmcx, xpcy, xmcy;
-	float ypcy, ymcy, ypcx, ymcx;
-	float x, y, dx, dy;
+	int result;
+	Sint16 w, h, r2, tmp;
+	Sint16 cx, cy, ocx, ocy, df, d_e, d_se;
+	Sint16 xpcx, xmcx, xpcy, xmcy;
+	Sint16 ypcy, ymcy, ypcx, ymcx;
+	Sint16 x, y, dx, dy;
+	GFX_Batch batch;
 
 	/* 
 	* Check destination renderer 
 	*/
-	if (renderer == NULL)
-	{
-		return false;
+	if (renderer == NULL) {
+		return -1;
 	}
 
 	/*
 	* Check radius vor valid range
 	*/
 	if (rad < 0) {
-		return false;
+		return -1;
 	}
 
 	/*
@@ -590,17 +950,22 @@ bool roundedBoxRGBA(SDL_Renderer * renderer, float x1, float y1, float x2,
 	* Maybe adjust radius
 	*/
 	r2 = rad + rad;
-	if (r2 > w)  
-	{
-		rad = (Sint32) w / 2;
+	if (r2 > w) {
+		rad = w / 2;
 		r2 = rad + rad;
 	}
-	if (r2 > h)
-	{
-		rad = (Sint32) h / 2;
+	if (r2 > h) {
+		rad = h / 2;
 	}
 
-	/* Setup filled circle drawing for corners */
+	/* Setup filled circle drawing for corners (after clamping the radius, PRIM-004) */
+	cx = 0;
+	cy = rad;
+	ocx = -1;
+	ocy = -1;
+	df = 1 - rad;
+	d_e = 3;
+	d_se = -2 * rad + 5;
 	x = x1 + rad;
 	y = y1 + rad;
 	dx = x2 - x1 - rad - rad;
@@ -609,9 +974,7 @@ bool roundedBoxRGBA(SDL_Renderer * renderer, float x1, float y1, float x2,
 	/*
 	* Set color
 	*/
-	result = true;
-	result &= SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
-	result &= SDL_SetRenderDrawColor(renderer, r, g, b, a);
+	_gfxBatchBegin(&batch, renderer, r, g, b, a);
 
 	/*
 	* Draw corners
@@ -625,10 +988,10 @@ bool roundedBoxRGBA(SDL_Renderer * renderer, float x1, float y1, float x2,
 			if (cy > 0) {
 				ypcy = y + cy;
 				ymcy = y - cy;
-				result &= hline(renderer, xmcx, xpcx + dx, ypcy + dy);
-				result &= hline(renderer, xmcx, xpcx + dx, ymcy);
+				_gfxBatchHLine(&batch, xmcx, xpcx + dx, ypcy + dy);
+				_gfxBatchHLine(&batch, xmcx, xpcx + dx, ymcy);
 			} else {
-				result &= hline(renderer, xmcx, xpcx + dx, y);
+				_gfxBatchHLine(&batch, xmcx, xpcx + dx, y);
 			}
 			ocy = cy;
 		}
@@ -637,10 +1000,10 @@ bool roundedBoxRGBA(SDL_Renderer * renderer, float x1, float y1, float x2,
 				if (cx > 0) {
 					ypcx = y + cx;
 					ymcx = y - cx;
-					result &= hline(renderer, xmcy, xpcy + dx, ymcx);
-					result &= hline(renderer, xmcy, xpcy + dx, ypcx + dy);
+					_gfxBatchHLine(&batch, xmcy, xpcy + dx, ymcx);
+					_gfxBatchHLine(&batch, xmcy, xpcy + dx, ypcx + dy);
 				} else {
-					result &= hline(renderer, xmcy, xpcy + dx, y);
+					_gfxBatchHLine(&batch, xmcy, xpcy + dx, y);
 				}
 			}
 			ocx = cx;
@@ -662,9 +1025,10 @@ bool roundedBoxRGBA(SDL_Renderer * renderer, float x1, float y1, float x2,
 		cx++;
 	} while (cx <= cy);
 
-	/* Inside */
-	if (dx > 0 && dy > 0) {
-		result &= boxRGBA(renderer, x1, y1 + rad + 1, x2, y2 - rad, r, g, b, a);
+	/* Inside (full width; also when the corners touch horizontally, PRIM-012) */
+	result = _gfxBatchEnd(&batch);
+	if (dy > 0) {
+		result |= boxRGBA(renderer, x1, y1 + rad + 1, x2, y2 - rad, r, g, b, a);
 	}
 
 	return (result);
@@ -682,12 +1046,11 @@ bool roundedBoxRGBA(SDL_Renderer * renderer, float x1, float y1, float x2,
 \param y2 Y coordinate of the second point (i.e. bottom left) of the box.
 \param color The color value of the box to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool boxColor(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, Uint32 color)
+int boxColor(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return boxRGBA(renderer, x1, y1, x2, y2, c[0], c[1], c[2], c[3]);
+	return boxRGBA(renderer, x1, y1, x2, y2, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -703,12 +1066,12 @@ bool boxColor(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, U
 \param b The blue value of the box to draw. 
 \param a The alpha value of the box to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool boxRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int boxRGBA(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	bool result;
-	float tmp;
+	int result;
+	Sint16 tmp;
 	SDL_FRect rect;
 
 	/*
@@ -746,19 +1109,19 @@ bool boxRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, Ui
 
 	/* 
 	* Create destination rect
-	*/	
-	rect.x = x1;
-	rect.y = y1;
-	rect.w = x2 - x1 + 1;
-	rect.h = y2 - y1 + 1;
-	
+	*/
+	rect.x = (float)x1;
+	rect.y = (float)y1;
+	rect.w = (float)(x2 - x1 + 1);
+	rect.h = (float)(y2 - y1 + 1);
+
 	/*
 	* Draw
 	*/
-	result = true;
-	result &= SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
-	result &= SDL_SetRenderDrawColor(renderer, r, g, b, a);	
-	result &= SDL_RenderFillRect(renderer, &rect);
+	result = 0;
+	result |= GFX_RESULT(SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND));
+	result |= GFX_RESULT(SDL_SetRenderDrawColor(renderer, r, g, b, a));
+	result |= GFX_RESULT(SDL_RenderFillRect(renderer, &rect));
 	return result;
 }
 
@@ -773,14 +1136,14 @@ bool boxRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, Ui
 \param x2 X coordinate of the second point of the line.
 \param y2 Y coordinate of the second point of the line.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool line(SDL_Renderer * renderer, float x1, float y1, float x2, float y2)
+static int line(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2)
 {
 	/*
 	* Draw
 	*/
-	return SDL_RenderLine(renderer, x1, y1, x2, y2);
+	return _gfxDrawLine(renderer, x1, y1, x2, y2);
 }
 
 /*!
@@ -793,12 +1156,11 @@ bool line(SDL_Renderer * renderer, float x1, float y1, float x2, float y2)
 \param y2 Y coordinate of the seond point of the line.
 \param color The color value of the line to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool lineColor(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, Uint32 color)
+int lineColor(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return lineRGBA(renderer, x1, y1, x2, y2, c[0], c[1], c[2], c[3]);
+	return lineRGBA(renderer, x1, y1, x2, y2, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -814,24 +1176,24 @@ bool lineColor(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, 
 \param b The blue value of the line to draw. 
 \param a The alpha value of the line to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool lineRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int lineRGBA(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
 	/*
 	* Draw
 	*/
-	bool result = true;
-	result &= SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
-	result &= SDL_SetRenderDrawColor(renderer, r, g, b, a);	
-	result &= SDL_RenderLine(renderer, x1, y1, x2, y2);
+	int result = 0;
+	result |= GFX_RESULT(SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND));
+	result |= GFX_RESULT(SDL_SetRenderDrawColor(renderer, r, g, b, a));
+	result |= _gfxDrawLine(renderer, x1, y1, x2, y2);
 	return result;
 }
 
 /* ---- AA Line */
 
-#define AAlevels 256
-#define AAbits 8
+#define AAlevels 256 /*!< Number of intensity levels of anti-aliased lines. */
+#define AAbits   8 /*!< Bits of the intensity of anti-aliased lines. */
 
 /*!
 \brief Internal function to draw anti-aliased line with alpha blending and endpoint control.
@@ -854,15 +1216,15 @@ with alpha<255.
 \param a The alpha value of the aa-line to draw.
 \param draw_endpoint Flag indicating if the endpoint should be drawn; draw if non-zero.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool _aalineRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, Uint8 r, Uint8 g, Uint8 b, Uint8 a, bool draw_endpoint)
+static void _aalineBatch(GFX_Batch *batch, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, int draw_endpoint)
 {
-	float xx0, yy0, xx1, yy1;
-	bool result;
+	Sint32 xx0, yy0, xx1, yy1;
+	int i;
 	Uint32 intshift, erracc, erradj;
 	Uint32 erracctmp, wgt;
-	Sint32 dx, dy, tmp, xdir, y0p1, x0pxdir;
+	int dx, dy, tmp, xdir, y0p1, x0pxdir;
 
 	/*
 	* Keep on working with 32bit numbers 
@@ -899,7 +1261,7 @@ bool _aalineRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2
 		xdir = -1;
 		dx = (-dx);
 	}
-	
+
 	/*
 	* Check for special cases 
 	*/
@@ -907,43 +1269,44 @@ bool _aalineRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2
 		/*
 		* Vertical line 
 		*/
-		if (draw_endpoint)
-		{
-			return (vlineRGBA(renderer, x1, y1, y2, r, g, b, a));
+		if (draw_endpoint) {
+			_gfxBatchVLine(batch, x1, y1, y2);
 		} else {
 			if (dy > 0) {
-				return (vlineRGBA(renderer, x1, yy0, yy0+dy, r, g, b, a));
+				_gfxBatchVLine(batch, x1, (Sint16)yy0, (Sint16)(yy0 + dy));
 			} else {
-				return (pixelRGBA(renderer, x1, y1, r, g, b, a));
+				_gfxBatchPoint(batch, x1, y1);
 			}
 		}
+		return;
 	} else if (dy == 0) {
 		/*
 		* Horizontal line 
 		*/
-		if (draw_endpoint)
-		{
-			return (hlineRGBA(renderer, x1, x2, y1, r, g, b, a));
+		if (draw_endpoint) {
+			_gfxBatchHLine(batch, x1, x2, y1);
 		} else {
 			if (dx > 0) {
-				return (hlineRGBA(renderer, xx0, xx0+(xdir*dx), y1, r, g, b, a));
+				_gfxBatchHLine(batch, (Sint16)xx0, (Sint16)(xx0 + (xdir * dx)), y1);
 			} else {
-				return (pixelRGBA(renderer, x1, y1, r, g, b, a));
+				_gfxBatchPoint(batch, x1, y1);
 			}
 		}
+		return;
 	} else if ((dx == dy) && (draw_endpoint)) {
 		/*
 		* Diagonal line (with endpoint)
 		*/
-		return (lineRGBA(renderer, x1, y1, x2, y2,  r, g, b, a));
+		for (i = 0; i <= dx; i++) {
+			_gfxBatchPoint(batch, (Sint16)(xx0 + xdir * i), (Sint16)(yy0 + i));
+		}
+		return;
 	}
 
 
 	/*
 	* Line is not horizontal, vertical or diagonal (with endpoint)
 	*/
-	result = true;
-
 	/*
 	* Zero accumulator 
 	*/
@@ -955,9 +1318,9 @@ bool _aalineRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2
 	intshift = 32 - AAbits;
 
 	/*
-	* Draw the initial pixel in the foreground color
+	* Draw the initial pixel in the foreground color 
 	*/
-	result &= pixelRGBA(renderer, x1, y1, r, g, b, a);
+	_gfxBatchPixelAlpha(batch, x1, y1, batch->a);
 
 	/*
 	* x-major or y-major? 
@@ -988,7 +1351,7 @@ bool _aalineRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2
 				xx0 = x0pxdir;
 				x0pxdir += xdir;
 			}
-			yy0++;		/* y-major so always advance Y */
+			yy0++; /* y-major so always advance Y */
 
 			/*
 			* the AAbits most significant bits of erracc give us the intensity
@@ -996,8 +1359,8 @@ bool _aalineRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2
 			* the paired pixel. 
 			*/
 			wgt = (erracc >> intshift) & 255;
-			result &= pixelRGBAWeight (renderer, xx0, yy0, r, g, b, a, 255 - wgt);
-			result &= pixelRGBAWeight (renderer, x0pxdir, yy0, r, g, b, a, wgt);
+			_gfxBatchPixelWeight(batch, (Sint16)xx0, (Sint16)yy0, 255 - wgt);
+			_gfxBatchPixelWeight(batch, (Sint16)x0pxdir, (Sint16)yy0, wgt);
 		}
 
 	} else {
@@ -1027,15 +1390,15 @@ bool _aalineRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2
 				yy0 = y0p1;
 				y0p1++;
 			}
-			xx0 += xdir;	/* x-major so always advance X */
+			xx0 += xdir; /* x-major so always advance X */
 			/*
 			* the AAbits most significant bits of erracc give us the intensity
 			* weighting for this pixel, and the complement of the weighting for
 			* the paired pixel. 
 			*/
 			wgt = (erracc >> intshift) & 255;
-			result &= pixelRGBAWeight (renderer, xx0, yy0, r, g, b, a, 255 - wgt);
-			result &= pixelRGBAWeight (renderer, xx0, y0p1, r, g, b, a, wgt);
+			_gfxBatchPixelWeight(batch, (Sint16)xx0, (Sint16)yy0, 255 - wgt);
+			_gfxBatchPixelWeight(batch, (Sint16)xx0, (Sint16)y0p1, wgt);
 		}
 	}
 
@@ -1047,10 +1410,33 @@ bool _aalineRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2
 		* Draw final pixel, always exactly intersected by the line and doesn't
 		* need to be weighted. 
 		*/
-		result &= pixelRGBA (renderer, x2, y2, r, g, b, a);
+		_gfxBatchPixelAlpha(batch, x2, y2, batch->a);
 	}
+}
 
-	return (result);
+/*!
+\brief Internal function to draw anti-aliased line with alpha blending and endpoint control.
+
+\param renderer The renderer to draw on.
+\param x1 X coordinate of the first point of the aa-line.
+\param y1 Y coordinate of the first point of the aa-line.
+\param x2 X coordinate of the second point of the aa-line.
+\param y2 Y coordinate of the second point of the aa-line.
+\param r The red value of the aa-line to draw. 
+\param g The green value of the aa-line to draw. 
+\param b The blue value of the aa-line to draw. 
+\param a The alpha value of the aa-line to draw.
+\param draw_endpoint Flag indicating if the endpoint should be drawn; draw if non-zero.
+
+\returns Returns 0 on success, -1 on failure.
+*/
+static int _aalineRGBA(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Uint8 r, Uint8 g, Uint8 b, Uint8 a, int draw_endpoint)
+{
+	GFX_Batch batch;
+
+	_gfxBatchBegin(&batch, renderer, r, g, b, a);
+	_aalineBatch(&batch, x1, y1, x2, y2, draw_endpoint);
+	return (_gfxBatchEnd(&batch));
 }
 
 /*!
@@ -1063,12 +1449,11 @@ bool _aalineRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2
 \param y2 Y coordinate of the second point of the aa-line.
 \param color The color value of the aa-line to draw (0xRRGGBBAA).
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool aalineColor(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, Uint32 color)
+int aalineColor(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return _aalineRGBA(renderer, x1, y1, x2, y2, c[0], c[1], c[2], c[3], true);
+	return _aalineRGBA(renderer, x1, y1, x2, y2, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color), 1);
 }
 
 /*!
@@ -1084,11 +1469,11 @@ bool aalineColor(SDL_Renderer * renderer, float x1, float y1, float x2, float y2
 \param b The blue value of the aa-line to draw. 
 \param a The alpha value of the aa-line to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool aalineRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int aalineRGBA(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	return _aalineRGBA(renderer, x1, y1, x2, y2, r, g, b, a, true);
+	return _aalineRGBA(renderer, x1, y1, x2, y2, r, g, b, a, 1);
 }
 
 /* ----- Circle */
@@ -1102,12 +1487,11 @@ bool aalineRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2,
 \param rad Radius in pixels of the circle.
 \param color The color value of the circle to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool circleColor(SDL_Renderer * renderer, float x, float y, float rad, Uint32 color)
+int circleColor(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rad, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return ellipseRGBA(renderer, x, y, rad, rad, c[0], c[1], c[2], c[3]);
+	return ellipseRGBA(renderer, x, y, rad, rad, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -1122,9 +1506,9 @@ bool circleColor(SDL_Renderer * renderer, float x, float y, float rad, Uint32 co
 \param b The blue value of the circle to draw. 
 \param a The alpha value of the circle to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool circleRGBA(SDL_Renderer * renderer, float x, float y, float rad, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int circleRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rad, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
 	return ellipseRGBA(renderer, x, y, rad, rad, r, g, b, a);
 }
@@ -1142,12 +1526,11 @@ bool circleRGBA(SDL_Renderer * renderer, float x, float y, float rad, Uint8 r, U
 \param end Ending radius in degrees of the arc. 0 degrees is down, increasing counterclockwise.
 \param color The color value of the arc to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool arcColor(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start, Sint32 end, Uint32 color)
+int arcColor(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rad, Sint16 start, Sint16 end, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return arcRGBA(renderer, x, y, rad, start, end, c[0], c[1], c[2], c[3]);
+	return arcRGBA(renderer, x, y, rad, start, end, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -1164,28 +1547,28 @@ bool arcColor(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start
 \param b The blue value of the arc to draw. 
 \param a The alpha value of the arc to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
 /* TODO: rewrite algorithm; arc endpoints are not always drawn */
-bool arcRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start, Sint32 end, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int arcRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rad, Sint16 start, Sint16 end, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	bool result;
-	float cx = 0;
-	float cy = rad;
-	float df = 1 - rad;
-	float d_e = 3;
-	float d_se = -2 * rad + 5;
-	float xpcx, xmcx, xpcy, xmcy;
-	float ypcy, ymcy, ypcx, ymcx;
+	GFX_Batch batch;
+	Sint16 cx = 0;
+	Sint16 cy = rad;
+	Sint16 df = 1 - rad;
+	Sint16 d_e = 3;
+	Sint16 d_se = -2 * rad + 5;
+	Sint16 xpcx, xmcx, xpcy, xmcy;
+	Sint16 ypcy, ymcy, ypcx, ymcx;
 	Uint8 drawoct;
-	Sint32 startoct, endoct, oct, stopval_start = 0, stopval_end = 0;
+	int startoct, endoct, oct, stopval_start = 0, stopval_end = 0;
 	double dstart, dend, temp = 0.;
 
 	/*
 	* Sanity check radius 
 	*/
 	if (rad < 0) {
-		return (false);
+		return (-1);
 	}
 
 	/*
@@ -1193,6 +1576,13 @@ bool arcRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start,
 	*/
 	if (rad == 0) {
 		return (pixelRGBA(renderer, x, y, r, g, b, a));
+	}
+
+	/*
+	* Special case for a full turn (e.g. 0..360) - draw a circle (PRIM-005)
+	*/
+	if ((start != end) && ((((int)end - (int)start) % 360) == 0)) {
+		return (circleRGBA(renderer, x, y, rad, r, g, b, a));
 	}
 
 	/*
@@ -1213,18 +1603,14 @@ bool arcRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start,
 	 the set whether or not to keep drawing a given octant.
 	 For example: 0x00111100 means we're drawing in octants 2-5
 	*/
-	drawoct = 0; 
+	drawoct = 0;
 
 	/*
 	* Fixup angles
 	*/
-	start %= 360;
-	end %= 360;
 	/* 0 <= start & end < 360; note that sometimes start > end - if so, arc goes back through 0. */
-	while (start < 0) start += 360;
-	while (end < 0) end += 360;
-	start %= 360;
-	end %= 360;
+	start = (Sint16)(((start % 360) + 360) % 360);
+	end = (Sint16)(((end % 360) + 360) % 360);
 
 	/* now, we find which octants we're drawing in. */
 	startoct = start / 45;
@@ -1233,31 +1619,29 @@ bool arcRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start,
 
 	/* stopval_start, stopval_end; what values of cx to stop at. */
 	do {
-		oct = (oct + 1) % 8;
+		oct = (oct + 1) & 7; /* 0..7 (start/end are normalized to 0..359) */
 
 		if (oct == startoct) {
 			/* need to compute stopval_start for this octant.  Look at picture above if this is unclear */
 			dstart = (double)start;
-			switch (oct) 
-			{
-			case 0:
-			case 3:
-				temp = sin(dstart * M_PI / 180.);
-				break;
-			case 1:
-			case 6:
-				temp = cos(dstart * M_PI / 180.);
-				break;
-			case 2:
-			case 5:
-				temp = -cos(dstart * M_PI / 180.);
-				break;
-			case 4:
-			case 7:
-				temp = -sin(dstart * M_PI / 180.);
-				break;
-			default:
-				break;
+			switch (oct) {
+				case 0:
+				case 3:
+					temp = sin(dstart * M_PI / 180.);
+					break;
+				case 1:
+				case 6:
+					temp = cos(dstart * M_PI / 180.);
+					break;
+				case 2:
+				case 5:
+					temp = -cos(dstart * M_PI / 180.);
+					break;
+				case 4:
+				case 7:
+				default:
+					temp = -sin(dstart * M_PI / 180.);
+					break;
 			}
 			temp *= rad;
 			stopval_start = (int)temp;
@@ -1268,38 +1652,38 @@ bool arcRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start,
 			stop immediately after we render the last sensible pixel at x = ((int)temp).
 			and whether to draw in this octant initially
 			*/
-			if (oct % 2) drawoct |= (1 << oct);			/* this is basically like saying drawoct[oct] = true, if drawoct were a bool array */
-			else		 drawoct &= 255 - (1 << oct);	/* this is basically like saying drawoct[oct] = false */
+			if (oct % 2)
+				drawoct |= (1 << oct); /* this is basically like saying drawoct[oct] = true, if drawoct were a bool array */
+			else
+				drawoct &= 255 - (1 << oct); /* this is basically like saying drawoct[oct] = false */
 		}
 		if (oct == endoct) {
 			/* need to compute stopval_end for this octant */
 			dend = (double)end;
-			switch (oct)
-			{
-			case 0:
-			case 3:
-				temp = sin(dend * M_PI / 180);
-				break;
-			case 1:
-			case 6:
-				temp = cos(dend * M_PI / 180);
-				break;
-			case 2:
-			case 5:
-				temp = -cos(dend * M_PI / 180);
-				break;
-			case 4:
-			case 7:
-				temp = -sin(dend * M_PI / 180);
-				break;
-			default:
-				break;
+			switch (oct) {
+				case 0:
+				case 3:
+					temp = sin(dend * M_PI / 180);
+					break;
+				case 1:
+				case 6:
+					temp = cos(dend * M_PI / 180);
+					break;
+				case 2:
+				case 5:
+					temp = -cos(dend * M_PI / 180);
+					break;
+				case 4:
+				case 7:
+				default:
+					temp = -sin(dend * M_PI / 180);
+					break;
 			}
 			temp *= rad;
 			stopval_end = (int)temp;
 
 			/* and whether to draw in this octant initially */
-			if (startoct == endoct)	{
+			if (startoct == endoct) {
 				/* note:      we start drawing, stop, then start again in this case */
 				/* otherwise: we only draw in this octant, so initialize it to false, it will get set back to true */
 				if (start > end) {
@@ -1309,9 +1693,10 @@ bool arcRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start,
 				} else {
 					drawoct &= 255 - (1 << oct);
 				}
-			} 
-			else if (oct % 2) drawoct &= 255 - (1 << oct);
-			else			  drawoct |= (1 << oct);
+			} else if (oct % 2)
+				drawoct &= 255 - (1 << oct);
+			else
+				drawoct |= (1 << oct);
 		} else if (oct != startoct) { /* already verified that it's != endoct */
 			drawoct |= (1 << oct); /* draw this entire segment */
 		}
@@ -1322,9 +1707,7 @@ bool arcRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start,
 	/*
 	* Set color 
 	*/
-	result = true;
-	result &= SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
-	result &= SDL_SetRenderDrawColor(renderer, r, g, b, a);
+	_gfxBatchBegin(&batch, renderer, r, g, b, a);
 
 	/*
 	* Draw arc 
@@ -1337,13 +1720,13 @@ bool arcRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start,
 			xmcx = x - cx;
 
 			/* always check if we're drawing a certain octant before adding a pixel to that octant. */
-			if (drawoct & 4)  result &= pixel(renderer, xmcx, ypcy);
-			if (drawoct & 2)  result &= pixel(renderer, xpcx, ypcy);
-			if (drawoct & 32) result &= pixel(renderer, xmcx, ymcy);
-			if (drawoct & 64) result &= pixel(renderer, xpcx, ymcy);
+			if (drawoct & 4) _gfxBatchPoint(&batch, xmcx, ypcy);
+			if (drawoct & 2) _gfxBatchPoint(&batch, xpcx, ypcy);
+			if (drawoct & 32) _gfxBatchPoint(&batch, xmcx, ymcy);
+			if (drawoct & 64) _gfxBatchPoint(&batch, xpcx, ymcy);
 		} else {
-			if (drawoct & 96) result &= pixel(renderer, x, ymcy);
-			if (drawoct & 6)  result &= pixel(renderer, x, ypcy);
+			if (drawoct & 96) _gfxBatchPoint(&batch, x, ymcy);
+			if (drawoct & 6) _gfxBatchPoint(&batch, x, ypcy);
 		}
 
 		xpcy = x + cy;
@@ -1351,27 +1734,31 @@ bool arcRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start,
 		if (cx > 0 && cx != cy) {
 			ypcx = y + cx;
 			ymcx = y - cx;
-			if (drawoct & 8)   result &= pixel(renderer, xmcy, ypcx);
-			if (drawoct & 1)   result &= pixel(renderer, xpcy, ypcx);
-			if (drawoct & 16)  result &= pixel(renderer, xmcy, ymcx);
-			if (drawoct & 128) result &= pixel(renderer, xpcy, ymcx);
+			if (drawoct & 8) _gfxBatchPoint(&batch, xmcy, ypcx);
+			if (drawoct & 1) _gfxBatchPoint(&batch, xpcy, ypcx);
+			if (drawoct & 16) _gfxBatchPoint(&batch, xmcy, ymcx);
+			if (drawoct & 128) _gfxBatchPoint(&batch, xpcy, ymcx);
 		} else if (cx == 0) {
-			if (drawoct & 24)  result &= pixel(renderer, xmcy, y);
-			if (drawoct & 129) result &= pixel(renderer, xpcy, y);
+			if (drawoct & 24) _gfxBatchPoint(&batch, xmcy, y);
+			if (drawoct & 129) _gfxBatchPoint(&batch, xpcy, y);
 		}
 
 		/*
 		* Update whether we're drawing an octant
 		*/
 		if (stopval_start == cx) {
-			/* works like an on-off switch. */  
+			/* works like an on-off switch. */
 			/* This is just in case start & end are in the same octant. */
-			if (drawoct & (1 << startoct)) drawoct &= 255 - (1 << startoct);		
-			else						   drawoct |= (1 << startoct);
+			if (drawoct & (1 << startoct))
+				drawoct &= 255 - (1 << startoct);
+			else
+				drawoct |= (1 << startoct);
 		}
 		if (stopval_end == cx) {
-			if (drawoct & (1 << endoct)) drawoct &= 255 - (1 << endoct);
-			else						 drawoct |= (1 << endoct);
+			if (drawoct & (1 << endoct))
+				drawoct &= 255 - (1 << endoct);
+			else
+				drawoct |= (1 << endoct);
 		}
 
 		/*
@@ -1390,7 +1777,7 @@ bool arcRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start,
 		cx++;
 	} while (cx <= cy);
 
-	return (result);
+	return (_gfxBatchEnd(&batch));
 }
 
 /* ----- AA Circle */
@@ -1404,12 +1791,11 @@ bool arcRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start,
 \param rad Radius in pixels of the aa-circle.
 \param color The color value of the aa-circle to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool aacircleColor(SDL_Renderer * renderer, float x, float y, float rad, Uint32 color)
+int aacircleColor(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rad, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return aaellipseRGBA(renderer, x, y, rad, rad, c[0], c[1], c[2], c[3]);
+	return aaellipseRGBA(renderer, x, y, rad, rad, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -1424,9 +1810,9 @@ bool aacircleColor(SDL_Renderer * renderer, float x, float y, float rad, Uint32 
 \param b The blue value of the aa-circle to draw. 
 \param a The alpha value of the aa-circle to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool aacircleRGBA(SDL_Renderer * renderer, float x, float y, float rad, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int aacircleRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rad, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
 	/*
 	* Draw 
@@ -1439,53 +1825,49 @@ bool aacircleRGBA(SDL_Renderer * renderer, float x, float y, float rad, Uint8 r,
 /*!
 \brief Internal function to draw pixels or lines in 4 quadrants.
 
-\param renderer The renderer to draw on.
+\param batch The batch to draw with.
 \param x X coordinate of the center of the quadrant.
 \param y Y coordinate of the center of the quadrant.
 \param dx X offset in pixels of the corners of the quadrant.
 \param dy Y offset in pixels of the corners of the quadrant.
 \param f Flag indicating if the quadrant should be filled (1) or not (0).
-
-\returns Returns true on success, false on failure.
 */
-bool _drawQuadrants(SDL_Renderer * renderer,  float x, float y, float dx, float dy, bool f)
+static void _drawQuadrants(GFX_Batch *batch, Sint16 x, Sint16 y, Sint16 dx, Sint16 dy, Sint32 f)
 {
-	bool result = true;
-	float xpdx, xmdx;
-	float ypdy, ymdy;
+	Sint16 xpdx, xmdx;
+	Sint16 ypdy, ymdy;
 
 	if (dx == 0) {
 		if (dy == 0) {
-			result &= pixel(renderer, x, y);
+			_gfxBatchPoint(batch, x, y);
 		} else {
 			ypdy = y + dy;
 			ymdy = y - dy;
 			if (f) {
-				result &= vline(renderer, x, ymdy, ypdy);
+				_gfxBatchVLine(batch, x, ymdy, ypdy);
 			} else {
-				result &= pixel(renderer, x, ypdy);
-				result &= pixel(renderer, x, ymdy);
+				_gfxBatchPoint(batch, x, ypdy);
+				_gfxBatchPoint(batch, x, ymdy);
 			}
 		}
-	} else {	
+	} else {
 		xpdx = x + dx;
 		xmdx = x - dx;
 		ypdy = y + dy;
 		ymdy = y - dy;
 		if (f) {
-				result &= vline(renderer, xpdx, ymdy, ypdy);
-				result &= vline(renderer, xmdx, ymdy, ypdy);
+			_gfxBatchVLine(batch, xpdx, ymdy, ypdy);
+			_gfxBatchVLine(batch, xmdx, ymdy, ypdy);
 		} else {
-				result &= pixel(renderer, xpdx, ypdy);
-				result &= pixel(renderer, xmdx, ypdy);
-				result &= pixel(renderer, xpdx, ymdy);
-				result &= pixel(renderer, xmdx, ymdy);
+			_gfxBatchPoint(batch, xpdx, ypdy);
+			_gfxBatchPoint(batch, xmdx, ypdy);
+			if (dy != 0) { /* the points on the horizontal axis only once (PRIM-016) */
+				_gfxBatchPoint(batch, xpdx, ymdy);
+				_gfxBatchPoint(batch, xmdx, ymdy);
+			}
 		}
 	}
-
-	return result;
 }
-
 /*!
 \brief Internal function to draw ellipse or filled ellipse with blending.
 
@@ -1500,75 +1882,59 @@ bool _drawQuadrants(SDL_Renderer * renderer,  float x, float y, float dx, float 
 \param a The alpha value of the ellipse to draw.
 \param f Flag indicating if the ellipse should be filled (1) or not (0).
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-#define DEFAULT_ELLIPSE_OVERSCAN	4
-bool _ellipseRGBA(SDL_Renderer * renderer, float x, float y, float rx, float ry, Uint8 r, Uint8 g, Uint8 b, Uint8 a, bool f)
+#define DEFAULT_ELLIPSE_OVERSCAN 4
+static int _ellipseRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rx, Sint16 ry, Uint8 r, Uint8 g, Uint8 b, Uint8 a, Sint32 f)
 {
-	bool result;
 	Sint32 rxi, ryi;
 	Sint32 rx2, ry2, rx22, ry22;
-    Sint32 error;
-    Sint32 curX, curY, curXp1, curYm1;
+	Sint32 error;
+	Sint32 curX, curY, curXp1, curYm1;
 	Sint32 scrX, scrY, oldX, oldY;
-    Sint32 deltaX, deltaY;
+	Sint32 deltaX, deltaY;
 	Sint32 ellipseOverscan;
+	GFX_Batch batch;
 
 	/*
 	* Sanity check radii 
 	*/
 	if ((rx < 0) || (ry < 0)) {
-		return (false);
+		return (-1);
 	}
 
 	/*
 	* Set color
 	*/
-	result = true;
-	result &= SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
-	result &= SDL_SetRenderDrawColor(renderer, r, g, b, a);
+	_gfxBatchBegin(&batch, renderer, r, g, b, a);
 
 	/*
 	* Special cases for rx=0 and/or ry=0: draw a hline/vline/pixel 
 	*/
 	if (rx == 0) {
 		if (ry == 0) {
-			return (pixel(renderer, x, y));
+			_gfxBatchPoint(&batch, x, y);
 		} else {
-			return (vline(renderer, x, y - ry, y + ry));
+			_gfxBatchVLine(&batch, x, y - ry, y + ry);
 		}
+		return (_gfxBatchEnd(&batch));
 	} else {
 		if (ry == 0) {
-			return (hline(renderer, x - rx, x + rx, y));
+			_gfxBatchHLine(&batch, x - rx, x + rx, y);
+			return (_gfxBatchEnd(&batch));
 		}
 	}
 
 	/*
-	* Special case for radii > 0 and < 1
-	*/
-	if (rx > 0 && rx < 1) {
-		rx = 1.0f;
-	}
-
-	if (ry > 0 && ry < 1) {
-		ry = 1.0f;
-	}
-
-	/*
- 	 * Adjust overscan
+ 	 * Adjust overscan 
 	 */
 	rxi = rx;
 	ryi = ry;
-	if (rxi >= 512 || ryi >= 512)
-	{
+	if (rxi >= 512 || ryi >= 512) {
 		ellipseOverscan = DEFAULT_ELLIPSE_OVERSCAN / 4;
-	} 
-	else if (rxi >= 256 || ryi >= 256)
-	{
+	} else if (rxi >= 256 || ryi >= 256) {
 		ellipseOverscan = DEFAULT_ELLIPSE_OVERSCAN / 2;
-	}
-	else
-	{
+	} else {
 		ellipseOverscan = DEFAULT_ELLIPSE_OVERSCAN / 1;
 	}
 
@@ -1576,92 +1942,87 @@ bool _ellipseRGBA(SDL_Renderer * renderer, float x, float y, float rx, float ry,
 	 * Top/bottom center points.
 	 */
 	oldX = scrX = 0;
-	oldY = scrY = ryi;
-	result &= _drawQuadrants(renderer, x, y, 0, ry, f);
+	oldY = ryi;
+	_drawQuadrants(&batch, x, y, 0, ry, f);
 
 	/* Midpoint ellipse algorithm with overdraw */
 	rxi *= ellipseOverscan;
 	ryi *= ellipseOverscan;
 	rx2 = rxi * rxi;
 	rx22 = rx2 + rx2;
-    ry2 = ryi * ryi;
+	ry2 = ryi * ryi;
 	ry22 = ry2 + ry2;
-    curX = 0;
-    curY = ryi;
-    deltaX = 0;
-    deltaY = rx22 * curY;
- 
-	/* Points in segment 1 */ 
-    error = ry2 - rx2 * ryi + rx2 / 4;
-    while (deltaX <= deltaY)
-    {
-          curX++;
-          deltaX += ry22;
- 
-          error +=  deltaX + ry2; 
-          if (error >= 0)
-          {
-               curY--;
-               deltaY -= rx22; 
-               error -= deltaY;
-          }
+	curX = 0;
+	curY = ryi;
+	deltaX = 0;
+	deltaY = rx22 * curY;
 
-		  scrX = curX / ellipseOverscan;
-		  scrY = curY / ellipseOverscan;
-		  if ((scrX != oldX && scrY == oldY) || (scrX != oldX && scrY != oldY)) {
-			result &= _drawQuadrants(renderer, x, y, scrX, scrY, f);
+	/* Points in segment 1 */
+	error = ry2 - rx2 * ryi + rx2 / 4;
+	while (deltaX <= deltaY) {
+		curX++;
+		deltaX += ry22;
+
+		error += deltaX + ry2;
+		if (error >= 0) {
+			curY--;
+			deltaY -= rx22;
+			error -= deltaY;
+		}
+
+		scrX = curX / ellipseOverscan;
+		scrY = curY / ellipseOverscan;
+		if ((scrX != oldX && scrY == oldY) || (scrX != oldX && scrY != oldY)) {
+			_drawQuadrants(&batch, x, y, (Sint16)scrX, (Sint16)scrY, f);
 			oldX = scrX;
 			oldY = scrY;
-		  }
-    }
+		}
+	}
 
 	/* Points in segment 2 */
-	if (curY > 0) 
-	{
+	if (curY > 0) {
 		curXp1 = curX + 1;
 		curYm1 = curY - 1;
 		error = ry2 * curX * curXp1 + ((ry2 + 3) / 4) + rx2 * curYm1 * curYm1 - rx2 * ry2;
-		while (curY > 0)
-		{
+		while (curY > 0) {
 			curY--;
 			deltaY -= rx22;
 
 			error += rx2;
 			error -= deltaY;
- 
-			if (error <= 0) 
-			{
-               curX++;
-               deltaX += ry22;
-               error += deltaX;
+
+			if (error <= 0) {
+				curX++;
+				deltaX += ry22;
+				error += deltaX;
 			}
 
-		    scrX = curX / ellipseOverscan;
-		    scrY = curY / ellipseOverscan;
-		    if ((scrX != oldX && scrY == oldY) || (scrX != oldX && scrY != oldY)) {
+			scrX = curX / ellipseOverscan;
+			scrY = curY / ellipseOverscan;
+			if ((scrX != oldX && scrY == oldY) || (scrX != oldX && scrY != oldY)) {
 				oldY--;
-				for (;oldY >= scrY; oldY--) {
-					result &= _drawQuadrants(renderer, x, y, scrX, oldY, f);
+				for (; oldY >= scrY; oldY--) {
+					_drawQuadrants(&batch, x, y, (Sint16)scrX, (Sint16)oldY, f);
 					/* prevent overdraw */
 					if (f) {
 						oldY = scrY - 1;
 					}
 				}
-  				oldX = scrX;
+				oldX = scrX;
 				oldY = scrY;
-		    }		
+			}
 		}
 
 		/* Remaining points in vertical */
 		if (!f) {
 			oldY--;
-			for (;oldY >= 0; oldY--) {
-				result &= _drawQuadrants(renderer, x, y, scrX, oldY, f);
+			for (; oldY >= 0; oldY--) {
+				_drawQuadrants(&batch, x, y, (Sint16)scrX, (Sint16)oldY, f);
 			}
 		}
 	}
 
-	return (result);
+	return (_gfxBatchEnd(&batch));
 }
 
 /*!
@@ -1674,12 +2035,11 @@ bool _ellipseRGBA(SDL_Renderer * renderer, float x, float y, float rx, float ry,
 \param ry Vertical radius in pixels of the ellipse.
 \param color The color value of the ellipse to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool ellipseColor(SDL_Renderer * renderer, float x, float y, float rx, float ry, Uint32 color)
+int ellipseColor(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rx, Sint16 ry, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return _ellipseRGBA(renderer, x, y, rx, ry, c[0], c[1], c[2], c[3], false);
+	return _ellipseRGBA(renderer, x, y, rx, ry, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color), 0);
 }
 
 /*!
@@ -1695,11 +2055,11 @@ bool ellipseColor(SDL_Renderer * renderer, float x, float y, float rx, float ry,
 \param b The blue value of the ellipse to draw. 
 \param a The alpha value of the ellipse to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool ellipseRGBA(SDL_Renderer * renderer, float x, float y, float rx, float ry, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int ellipseRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rx, Sint16 ry, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	return _ellipseRGBA(renderer, x, y, rx, ry, r, g, b, a, false);
+	return _ellipseRGBA(renderer, x, y, rx, ry, r, g, b, a, 0);
 }
 
 /* ----- Filled Circle */
@@ -1713,12 +2073,11 @@ bool ellipseRGBA(SDL_Renderer * renderer, float x, float y, float rx, float ry, 
 \param rad Radius in pixels of the filled circle.
 \param color The color value of the filled circle to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool filledCircleColor(SDL_Renderer * renderer, float x, float y, float rad, Uint32 color)
+int filledCircleColor(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rad, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return filledEllipseRGBA(renderer, x, y, rad, rad, c[0], c[1], c[2], c[3]);
+	return filledEllipseRGBA(renderer, x, y, rad, rad, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -1733,55 +2092,15 @@ bool filledCircleColor(SDL_Renderer * renderer, float x, float y, float rad, Uin
 \param b The blue value of the filled circle to draw. 
 \param a The alpha value of the filled circle to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool filledCircleRGBA(SDL_Renderer * renderer, float x, float y, float rad, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int filledCircleRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rad, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	return _ellipseRGBA(renderer, x, y, rad, rad, r, g ,b, a, true);
+	return _ellipseRGBA(renderer, x, y, rad, rad, r, g, b, a, 1);
 }
 
 
 /* ----- AA Ellipse */
-
-/* Windows targets do not have lrint, so provide a local inline version */
-#if defined(_MSC_VER) && _MSC_VER < 1920
-/* Detect 64bit and use intrinsic version */
-#ifdef _M_X64
-#include <emmintrin.h>
-static __inline long 
-	lrint(float f) 
-{
-	return _mm_cvtss_si32(_mm_load_ss(&f));
-}
-#elif defined(_M_IX86)
-__inline long int
-	lrint (double flt)
-{	
-	int intgr;
-	_asm
-	{
-		fld flt
-			fistp intgr
-	};
-	return intgr;
-}
-#elif defined(_M_ARM)
-#include <armintr.h>
-#pragma warning(push)
-#pragma warning(disable: 4716)
-__declspec(naked) long int
-	lrint (double flt)
-{
-	__emit(0xEC410B10); // fmdrr  d0, r0, r1
-	__emit(0xEEBD0B40); // ftosid s0, d0
-	__emit(0xEE100A10); // fmrs   r0, s0
-	__emit(0xE12FFF1E); // bx     lr
-}
-#pragma warning(pop)
-#else
-#error lrint needed for MSVC on non X86/AMD64/ARM targets.
-#endif
-#endif
 
 /*!
 \brief Draw anti-aliased ellipse with blending.
@@ -1793,12 +2112,11 @@ __declspec(naked) long int
 \param ry Vertical radius in pixels of the aa-ellipse.
 \param color The color value of the aa-ellipse to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool aaellipseColor(SDL_Renderer * renderer, float x, float y, float rx, float ry, Uint32 color)
+int aaellipseColor(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rx, Sint16 ry, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return aaellipseRGBA(renderer, x, y, rx, ry, c[0], c[1], c[2], c[3]);
+	return aaellipseRGBA(renderer, x, y, rx, ry, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -1814,14 +2132,14 @@ bool aaellipseColor(SDL_Renderer * renderer, float x, float y, float rx, float r
 \param b The blue value of the aa-ellipse to draw. 
 \param a The alpha value of the aa-ellipse to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool aaellipseRGBA(SDL_Renderer * renderer, float x, float y, float rx, float ry, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int aaellipseRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rx, Sint16 ry, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	bool result;
-	Sint32 i;
-	Sint32 a2, b2, ds, dt, dxt, t, s, d;
-	float xp, yp, xs, ys, dyt, od, xx, yy, xc2, yc2;
+	int i;
+	GFX_Batch batch;
+	int a2, b2, ds, dt, dxt, t, s, d;
+	Sint16 xp, yp, xs, ys, dyt, od, xx, yy, xc2, yc2;
 	float cp;
 	double sab;
 	Uint8 weight, iweight;
@@ -1830,7 +2148,7 @@ bool aaellipseRGBA(SDL_Renderer * renderer, float x, float y, float rx, float ry
 	* Sanity check radii 
 	*/
 	if ((rx < 0) || (ry < 0)) {
-		return (false);
+		return (-1);
 	}
 
 	/*
@@ -1859,8 +2177,8 @@ bool aaellipseRGBA(SDL_Renderer * renderer, float x, float y, float rx, float ry
 	yc2 = 2 * y;
 
 	sab = sqrt((double)(a2 + b2));
-	od = (float)lrint(sab*0.01) + 1; /* introduce some overdraw */
-	dxt = (float)lrint((double)a2 / sab) + od;
+	od = (Sint16)lrint(sab * 0.01) + 1; /* introduce some overdraw */
+	dxt = (Sint16)lrint((double)a2 / sab) + od;
 
 	t = 0;
 	s = -2 * a2 * ry;
@@ -1870,14 +2188,13 @@ bool aaellipseRGBA(SDL_Renderer * renderer, float x, float y, float rx, float ry
 	yp = y - ry;
 
 	/* Draw */
-	result = true;
-	result &= SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
+	_gfxBatchBegin(&batch, renderer, r, g, b, a);
 
 	/* "End points" */
-	result &= pixelRGBA(renderer, xp, yp, r, g, b, a);
-	result &= pixelRGBA(renderer, xc2 - xp, yp, r, g, b, a);
-	result &= pixelRGBA(renderer, xp, yc2 - yp, r, g, b, a);
-	result &= pixelRGBA(renderer, xc2 - xp, yc2 - yp, r, g, b, a);
+	_gfxBatchPixelAlpha(&batch, xp, yp, a);
+	_gfxBatchPixelAlpha(&batch, xc2 - xp, yp, a);
+	_gfxBatchPixelAlpha(&batch, xp, yc2 - yp, a);
+	_gfxBatchPixelAlpha(&batch, xc2 - xp, yc2 - yp, a);
 
 	for (i = 1; i <= dxt; i++) {
 		xp--;
@@ -1905,7 +2222,7 @@ bool aaellipseRGBA(SDL_Renderer * renderer, float x, float y, float rx, float ry
 
 		/* Calculate alpha */
 		if (s != 0) {
-			cp = (float) abs(d) / (float) abs(s);
+			cp = (float)abs(d) / (float)abs(s);
 			if (cp > 1.0) {
 				cp = 1.0;
 			}
@@ -1914,29 +2231,29 @@ bool aaellipseRGBA(SDL_Renderer * renderer, float x, float y, float rx, float ry
 		}
 
 		/* Calculate weights */
-		weight = (Uint8) (cp * 255);
+		weight = (Uint8)(cp * 255);
 		iweight = 255 - weight;
 
 		/* Upper half */
 		xx = xc2 - xp;
-		result &= pixelRGBAWeight(renderer, xp, yp, r, g, b, a, iweight);
-		result &= pixelRGBAWeight(renderer, xx, yp, r, g, b, a, iweight);
+		_gfxBatchPixelWeight(&batch, xp, yp, iweight);
+		_gfxBatchPixelWeight(&batch, xx, yp, iweight);
 
-		result &= pixelRGBAWeight(renderer, xp, ys, r, g, b, a, weight);
-		result &= pixelRGBAWeight(renderer, xx, ys, r, g, b, a, weight);
+		_gfxBatchPixelWeight(&batch, xp, ys, weight);
+		_gfxBatchPixelWeight(&batch, xx, ys, weight);
 
 		/* Lower half */
 		yy = yc2 - yp;
-		result &= pixelRGBAWeight(renderer, xp, yy, r, g, b, a, iweight);
-		result &= pixelRGBAWeight(renderer, xx, yy, r, g, b, a, iweight);
+		_gfxBatchPixelWeight(&batch, xp, yy, iweight);
+		_gfxBatchPixelWeight(&batch, xx, yy, iweight);
 
 		yy = yc2 - ys;
-		result &= pixelRGBAWeight(renderer, xp, yy, r, g, b, a, weight);
-		result &= pixelRGBAWeight(renderer, xx, yy, r, g, b, a, weight);
+		_gfxBatchPixelWeight(&batch, xp, yy, weight);
+		_gfxBatchPixelWeight(&batch, xx, yy, weight);
 	}
 
 	/* Replaces original approximation code dyt = abs(yp - yc); */
-	dyt = (float)lrint((double)b2 / sab ) + od;
+	dyt = (Sint16)lrint((double)b2 / sab) + od;
 
 	for (i = 1; i <= dyt; i++) {
 		yp++;
@@ -1964,7 +2281,7 @@ bool aaellipseRGBA(SDL_Renderer * renderer, float x, float y, float rx, float ry
 
 		/* Calculate alpha */
 		if (t != 0) {
-			cp = (float) abs(d) / (float) abs(t);
+			cp = (float)abs(d) / (float)abs(t);
 			if (cp > 1.0) {
 				cp = 1.0;
 			}
@@ -1973,28 +2290,28 @@ bool aaellipseRGBA(SDL_Renderer * renderer, float x, float y, float rx, float ry
 		}
 
 		/* Calculate weight */
-		weight = (Uint8) (cp * 255);
+		weight = (Uint8)(cp * 255);
 		iweight = 255 - weight;
 
 		/* Left half */
 		xx = xc2 - xp;
 		yy = yc2 - yp;
-		result &= pixelRGBAWeight(renderer, xp, yp, r, g, b, a, iweight);
-		result &= pixelRGBAWeight(renderer, xx, yp, r, g, b, a, iweight);
+		_gfxBatchPixelWeight(&batch, xp, yp, iweight);
+		_gfxBatchPixelWeight(&batch, xx, yp, iweight);
 
-		result &= pixelRGBAWeight(renderer, xp, yy, r, g, b, a, iweight);
-		result &= pixelRGBAWeight(renderer, xx, yy, r, g, b, a, iweight);
+		_gfxBatchPixelWeight(&batch, xp, yy, iweight);
+		_gfxBatchPixelWeight(&batch, xx, yy, iweight);
 
 		/* Right half */
 		xx = xc2 - xs;
-		result &= pixelRGBAWeight(renderer, xs, yp, r, g, b, a, weight);
-		result &= pixelRGBAWeight(renderer, xx, yp, r, g, b, a, weight);
+		_gfxBatchPixelWeight(&batch, xs, yp, weight);
+		_gfxBatchPixelWeight(&batch, xx, yp, weight);
 
-		result &= pixelRGBAWeight(renderer, xs, yy, r, g, b, a, weight);
-		result &= pixelRGBAWeight(renderer, xx, yy, r, g, b, a, weight);		
+		_gfxBatchPixelWeight(&batch, xs, yy, weight);
+		_gfxBatchPixelWeight(&batch, xx, yy, weight);
 	}
 
-	return (result);
+	return (_gfxBatchEnd(&batch));
 }
 
 /* ---- Filled Ellipse */
@@ -2009,12 +2326,11 @@ bool aaellipseRGBA(SDL_Renderer * renderer, float x, float y, float rx, float ry
 \param ry Vertical radius in pixels of the filled ellipse.
 \param color The color value of the filled ellipse to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool filledEllipseColor(SDL_Renderer * renderer, float x, float y, float rx, float ry, Uint32 color)
+int filledEllipseColor(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rx, Sint16 ry, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return _ellipseRGBA(renderer, x, y, rx, ry, c[0], c[1], c[2], c[3], true);
+	return _ellipseRGBA(renderer, x, y, rx, ry, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color), 1);
 }
 
 /*!
@@ -2030,11 +2346,11 @@ bool filledEllipseColor(SDL_Renderer * renderer, float x, float y, float rx, flo
 \param b The blue value of the filled ellipse to draw. 
 \param a The alpha value of the filled ellipse to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool filledEllipseRGBA(SDL_Renderer * renderer, float x, float y, float rx, float ry, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int filledEllipseRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rx, Sint16 ry, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	return _ellipseRGBA(renderer, x, y, rx, ry, r, g, b, a, true);
+	return _ellipseRGBA(renderer, x, y, rx, ry, r, g, b, a, 1);
 }
 
 /* ----- Pie */
@@ -2056,23 +2372,23 @@ Note: Determines vertex array and uses polygon or filledPolygon drawing routines
 \param a The alpha value of the pie to draw.
 \param filled Flag indicating if the pie should be filled (=1) or not (=0).
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
 /* TODO: rewrite algorithm; pie is not always accurate */
-bool _pieRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start, Sint32 end,  Uint8 r, Uint8 g, Uint8 b, Uint8 a, bool filled)
+static int _pieRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rad, Sint16 start, Sint16 end, Uint8 r, Uint8 g, Uint8 b, Uint8 a, Uint8 filled)
 {
-	bool result;
+	int result;
 	double angle, start_angle, end_angle;
 	double deltaAngle;
 	double dr;
-	Sint32 numpoints, i;
-	float *vx, *vy;
+	int numpoints, i;
+	Sint16 *vx, *vy;
 
 	/*
 	* Sanity check radii 
 	*/
 	if (rad < 0) {
-		return (false);
+		return (-1);
 	}
 
 	/*
@@ -2091,10 +2407,10 @@ bool _pieRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start
 	/*
 	* Variable setup 
 	*/
-	dr = (double) rad;
+	dr = (double)rad;
 	deltaAngle = 3.0 / dr;
-	start_angle = (double) start *(2.0 * M_PI / 360.0);
-	end_angle = (double) end *(2.0 * M_PI / 360.0);
+	start_angle = (double)start * (2.0 * M_PI / 360.0);
+	end_angle = (double)end * (2.0 * M_PI / 360.0);
 	if (start > end) {
 		end_angle += (2.0 * M_PI);
 	}
@@ -2110,13 +2426,13 @@ bool _pieRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start
 	}
 
 	/* Allocate combined vertex array */
-	vx = vy = (float *) malloc(2 * sizeof(float) * numpoints);
+	vx = (Sint16 *)SDL_malloc(2 * sizeof(Sint16) * (size_t)numpoints);
 	if (vx == NULL) {
-		return (false);
+		return (-1);
 	}
 
-	/* Update point to start of vy */
-	vy += numpoints;
+	/* Second half holds the y coordinates */
+	vy = vx + numpoints;
 
 	/* Center */
 	vx[0] = x;
@@ -2124,26 +2440,23 @@ bool _pieRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start
 
 	/* First vertex */
 	angle = start_angle;
-	vx[1] = x + (int) (dr * cos(angle));
-	vy[1] = y + (int) (dr * sin(angle));
+	vx[1] = (Sint16)(x + (int)(dr * cos(angle)));
+	vy[1] = (Sint16)(y + (int)(dr * sin(angle)));
 
-	if (numpoints<3)
-	{
+	if (numpoints < 3) {
 		result = lineRGBA(renderer, vx[0], vy[0], vx[1], vy[1], r, g, b, a);
-	}
-	else
-	{
+	} else {
 		/* Calculate other vertices */
 		i = 2;
 		angle = start_angle;
-		while (angle < end_angle) {
+		/* Same steps as the counting loop above; i < numpoints is implied (SA-001) */
+		while ((angle < end_angle) && (i < numpoints)) {
 			angle += deltaAngle;
-			if (angle>end_angle)
-			{
+			if (angle > end_angle) {
 				angle = end_angle;
 			}
-			vx[i] = x + (int) (dr * cos(angle));
-			vy[i] = y + (int) (dr * sin(angle));
+			vx[i] = (Sint16)(x + (int)(dr * cos(angle)));
+			vy[i] = (Sint16)(y + (int)(dr * sin(angle)));
 			i++;
 		}
 
@@ -2156,7 +2469,7 @@ bool _pieRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start
 	}
 
 	/* Free combined vertex array */
-	free(vx);
+	SDL_free(vx);
 
 	return (result);
 }
@@ -2172,13 +2485,12 @@ bool _pieRGBA(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start
 \param end Ending radius in degrees of the pie.
 \param color The color value of the pie to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool pieColor(SDL_Renderer * renderer, float x, float y, float rad,
-	Sint32 start, Sint32 end, Uint32 color)
+int pieColor(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rad,
+	Sint16 start, Sint16 end, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return _pieRGBA(renderer, x, y, rad, start, end, c[0], c[1], c[2], c[3], false);
+	return _pieRGBA(renderer, x, y, rad, start, end, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color), 0);
 }
 
 /*!
@@ -2195,12 +2507,12 @@ bool pieColor(SDL_Renderer * renderer, float x, float y, float rad,
 \param b The blue value of the pie to draw. 
 \param a The alpha value of the pie to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool pieRGBA(SDL_Renderer * renderer, float x, float y, float rad,
-	Sint32 start, Sint32 end, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int pieRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rad,
+	Sint16 start, Sint16 end, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	return _pieRGBA(renderer, x, y, rad, start, end, r, g, b, a, false);
+	return _pieRGBA(renderer, x, y, rad, start, end, r, g, b, a, 0);
 }
 
 /*!
@@ -2214,12 +2526,11 @@ bool pieRGBA(SDL_Renderer * renderer, float x, float y, float rad,
 \param end Ending radius in degrees of the filled pie.
 \param color The color value of the filled pie to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool filledPieColor(SDL_Renderer * renderer, float x, float y, float rad, Sint32 start, Sint32 end, Uint32 color)
+int filledPieColor(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rad, Sint16 start, Sint16 end, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return _pieRGBA(renderer, x, y, rad, start, end, c[0], c[1], c[2], c[3], true);
+	return _pieRGBA(renderer, x, y, rad, start, end, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color), 1);
 }
 
 /*!
@@ -2236,12 +2547,12 @@ bool filledPieColor(SDL_Renderer * renderer, float x, float y, float rad, Sint32
 \param b The blue value of the filled pie to draw. 
 \param a The alpha value of the filled pie to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool filledPieRGBA(SDL_Renderer * renderer, float x, float y, float rad,
-	Sint32 start, Sint32 end, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int filledPieRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rad,
+	Sint16 start, Sint16 end, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	return _pieRGBA(renderer, x, y, rad, start, end, r, g, b, a, true);
+	return _pieRGBA(renderer, x, y, rad, start, end, r, g, b, a, 1);
 }
 
 /* ------ Trigon */
@@ -2260,21 +2571,21 @@ Note: Creates vertex array and uses polygon routine to render.
 \param y3 Y coordinate of the third point of the trigon.
 \param color The color value of the trigon to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool trigonColor(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, float x3, float y3, Uint32 color)
+int trigonColor(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Sint16 x3, Sint16 y3, Uint32 color)
 {
-	float vx[3];
-	float vy[3];
+	Sint16 vx[3];
+	Sint16 vy[3];
 
-	vx[0]=x1;
-	vx[1]=x2;
-	vx[2]=x3;
-	vy[0]=y1;
-	vy[1]=y2;
-	vy[2]=y3;
+	vx[0] = x1;
+	vx[1] = x2;
+	vx[2] = x3;
+	vy[0] = y1;
+	vy[1] = y2;
+	vy[2] = y3;
 
-	return(polygonColor(renderer,vx,vy,3,color));
+	return (polygonColor(renderer, vx, vy, 3, color));
 }
 
 /*!
@@ -2292,23 +2603,23 @@ bool trigonColor(SDL_Renderer * renderer, float x1, float y1, float x2, float y2
 \param b The blue value of the trigon to draw. 
 \param a The alpha value of the trigon to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool trigonRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, float x3, float y3,
+int trigonRGBA(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Sint16 x3, Sint16 y3,
 	Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	float vx[3];
-	float vy[3];
+	Sint16 vx[3];
+	Sint16 vy[3];
 
-	vx[0]=x1;
-	vx[1]=x2;
-	vx[2]=x3;
-	vy[0]=y1;
-	vy[1]=y2;
-	vy[2]=y3;
+	vx[0] = x1;
+	vx[1] = x2;
+	vx[2] = x3;
+	vy[0] = y1;
+	vy[1] = y2;
+	vy[2] = y3;
 
-	return(polygonRGBA(renderer,vx,vy,3,r,g,b,a));
-}				 
+	return (polygonRGBA(renderer, vx, vy, 3, r, g, b, a));
+}
 
 /* ------ AA-Trigon */
 
@@ -2326,21 +2637,21 @@ Note: Creates vertex array and uses aapolygon routine to render.
 \param y3 Y coordinate of the third point of the aa-trigon.
 \param color The color value of the aa-trigon to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool aatrigonColor(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, float x3, float y3, Uint32 color)
+int aatrigonColor(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Sint16 x3, Sint16 y3, Uint32 color)
 {
-	float vx[3];
-	float vy[3];
+	Sint16 vx[3];
+	Sint16 vy[3];
 
-	vx[0]=x1;
-	vx[1]=x2;
-	vx[2]=x3;
-	vy[0]=y1;
-	vy[1]=y2;
-	vy[2]=y3;
+	vx[0] = x1;
+	vx[1] = x2;
+	vx[2] = x3;
+	vy[0] = y1;
+	vy[1] = y2;
+	vy[2] = y3;
 
-	return(aapolygonColor(renderer,vx,vy,3,color));
+	return (aapolygonColor(renderer, vx, vy, 3, color));
 }
 
 /*!
@@ -2358,23 +2669,23 @@ bool aatrigonColor(SDL_Renderer * renderer, float x1, float y1, float x2, float 
 \param b The blue value of the aa-trigon to draw. 
 \param a The alpha value of the aa-trigon to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool aatrigonRGBA(SDL_Renderer * renderer,  float x1, float y1, float x2, float y2, float x3, float y3,
+int aatrigonRGBA(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Sint16 x3, Sint16 y3,
 	Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	float vx[3];
-	float vy[3];
+	Sint16 vx[3];
+	Sint16 vy[3];
 
-	vx[0]=x1;
-	vx[1]=x2;
-	vx[2]=x3;
-	vy[0]=y1;
-	vy[1]=y2;
-	vy[2]=y3;
+	vx[0] = x1;
+	vx[1] = x2;
+	vx[2] = x3;
+	vy[0] = y1;
+	vy[1] = y2;
+	vy[2] = y3;
 
-	return(aapolygonRGBA(renderer,vx,vy,3,r,g,b,a));
-}				   
+	return (aapolygonRGBA(renderer, vx, vy, 3, r, g, b, a));
+}
 
 /* ------ Filled Trigon */
 
@@ -2392,21 +2703,21 @@ Note: Creates vertex array and uses aapolygon routine to render.
 \param y3 Y coordinate of the third point of the filled trigon.
 \param color The color value of the filled trigon to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool filledTrigonColor(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, float x3, float y3, Uint32 color)
+int filledTrigonColor(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Sint16 x3, Sint16 y3, Uint32 color)
 {
-	float vx[3];
-	float vy[3];
+	Sint16 vx[3];
+	Sint16 vy[3];
 
-	vx[0]=x1;
-	vx[1]=x2;
-	vx[2]=x3;
-	vy[0]=y1;
-	vy[1]=y2;
-	vy[2]=y3;
+	vx[0] = x1;
+	vx[1] = x2;
+	vx[2] = x3;
+	vy[0] = y1;
+	vy[1] = y2;
+	vy[2] = y3;
 
-	return(filledPolygonColor(renderer,vx,vy,3,color));
+	return (filledPolygonColor(renderer, vx, vy, 3, color));
 }
 
 /*!
@@ -2426,22 +2737,22 @@ Note: Creates vertex array and uses aapolygon routine to render.
 \param b The blue value of the filled trigon to draw. 
 \param a The alpha value of the filled trigon to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool filledTrigonRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, float y2, float x3, float y3,
+int filledTrigonRGBA(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Sint16 x3, Sint16 y3,
 	Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	float vx[3];
-	float vy[3];
+	Sint16 vx[3];
+	Sint16 vy[3];
 
-	vx[0]=x1;
-	vx[1]=x2;
-	vx[2]=x3;
-	vy[0]=y1;
-	vy[1]=y2;
-	vy[2]=y3;
+	vx[0] = x1;
+	vx[1] = x2;
+	vx[2] = x3;
+	vy[0] = y1;
+	vy[1] = y2;
+	vy[2] = y3;
 
-	return(filledPolygonRGBA(renderer,vx,vy,3,r,g,b,a));
+	return (filledPolygonRGBA(renderer, vx, vy, 3, r, g, b, a));
 }
 
 /* ---- Polygon */
@@ -2455,12 +2766,11 @@ bool filledTrigonRGBA(SDL_Renderer * renderer, float x1, float y1, float x2, flo
 \param n Number of points in the vertex array. Minimum number is 3.
 \param color The color value of the polygon to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool polygonColor(SDL_Renderer * renderer, const float * vx, const float * vy, Sint32 n, Uint32 color)
+int polygonColor(SDL_Renderer *renderer, const Sint16 *vx, const Sint16 *vy, int n, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return polygonRGBA(renderer, vx, vy, n, c[0], c[1], c[2], c[3]);
+	return polygonRGBA(renderer, vx, vy, n, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -2471,56 +2781,54 @@ bool polygonColor(SDL_Renderer * renderer, const float * vx, const float * vy, S
 \param vy Vertex array containing Y coordinates of the points of the polygon.
 \param n Number of points in the vertex array. Minimum number is 3.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool polygon(SDL_Renderer * renderer, const float * vx, const float * vy, Sint32 n)
+static int polygon(SDL_Renderer *renderer, const Sint16 *vx, const Sint16 *vy, int n)
 {
 	/*
 	* Draw 
 	*/
-	bool result = true;
-	Sint32 i, nn;
-	SDL_FPoint* points;
+	int result = 0;
+	int i, nn;
+	SDL_FPoint *points;
 
 	/*
 	* Vertex array NULL check 
 	*/
 	if (vx == NULL) {
-		return (false);
+		return (-1);
 	}
 	if (vy == NULL) {
-		return (false);
+		return (-1);
 	}
 
 	/*
 	* Sanity check 
 	*/
 	if (n < 3) {
-		return (false);
+		return (-1);
 	}
 
 	/*
 	* Create array of points
 	*/
 	nn = n + 1;
-	points = (SDL_FPoint*)malloc(sizeof(SDL_FPoint) * nn);
-	if (points == NULL)
-	{
-		return false;
+	points = (SDL_FPoint *)SDL_malloc(sizeof(SDL_FPoint) * nn);
+	if (points == NULL) {
+		return -1;
 	}
-	for (i=0; i<n; i++)
-	{
-		points[i].x = vx[i];
-		points[i].y = vy[i];
+	for (i = 0; i < n; i++) {
+		points[i].x = (float)vx[i];
+		points[i].y = (float)vy[i];
 	}
-	points[n].x = vx[0];
-	points[n].y = vy[0];
+	points[n].x = (float)vx[0];
+	points[n].y = (float)vy[0];
 
 	/*
 	* Draw 
 	*/
-	result &= SDL_RenderLines(renderer, points, nn);
-	free(points);
+	result |= GFX_RESULT(SDL_RenderLines(renderer, points, nn));
+	SDL_free(points);
 
 	return (result);
 }
@@ -2537,52 +2845,43 @@ bool polygon(SDL_Renderer * renderer, const float * vx, const float * vy, Sint32
 \param b The blue value of the polygon to draw. 
 \param a The alpha value of the polygon to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool polygonRGBA(SDL_Renderer * renderer, const float * vx, const float * vy, Sint32 n, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int polygonRGBA(SDL_Renderer *renderer, const Sint16 *vx, const Sint16 *vy, int n, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
 	/*
 	* Draw 
 	*/
-	bool result;
-	const float *x1, *y1, *x2, *y2;
+	int result;
 
 	/*
 	* Vertex array NULL check 
 	*/
 	if (vx == NULL) {
-		return (false);
+		return (-1);
 	}
 	if (vy == NULL) {
-		return (false);
+		return (-1);
 	}
 
 	/*
 	* Sanity check 
 	*/
 	if (n < 3) {
-		return (false);
+		return (-1);
 	}
-
-	/*
-	* Pointer setup 
-	*/
-	x1 = x2 = vx;
-	y1 = y2 = vy;
-	x2++;
-	y2++;
 
 	/*
 	* Set color 
 	*/
-	result = true;
-	result &= SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
-	result &= SDL_SetRenderDrawColor(renderer, r, g, b, a);	
+	result = 0;
+	result |= GFX_RESULT(SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND));
+	result |= GFX_RESULT(SDL_SetRenderDrawColor(renderer, r, g, b, a));
 
 	/*
 	* Draw 
 	*/
-	result &= polygon(renderer, vx, vy, n);
+	result |= polygon(renderer, vx, vy, n);
 
 	return (result);
 }
@@ -2598,12 +2897,11 @@ bool polygonRGBA(SDL_Renderer * renderer, const float * vx, const float * vy, Si
 \param n Number of points in the vertex array. Minimum number is 3.
 \param color The color value of the aa-polygon to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool aapolygonColor(SDL_Renderer * renderer, const float * vx, const float * vy, Sint32 n, Uint32 color)
+int aapolygonColor(SDL_Renderer *renderer, const Sint16 *vx, const Sint16 *vy, int n, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return aapolygonRGBA(renderer, vx, vy, n, c[0], c[1], c[2], c[3]);
+	return aapolygonRGBA(renderer, vx, vy, n, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -2618,29 +2916,29 @@ bool aapolygonColor(SDL_Renderer * renderer, const float * vx, const float * vy,
 \param b The blue value of the aa-polygon to draw. 
 \param a The alpha value of the aa-polygon to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool aapolygonRGBA(SDL_Renderer * renderer, const float * vx, const float * vy, Sint32 n, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int aapolygonRGBA(SDL_Renderer *renderer, const Sint16 *vx, const Sint16 *vy, int n, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	bool result;
-	Sint32 i;
-	const float *x1, *y1, *x2, *y2;
+	int i;
+	const Sint16 *x1, *y1, *x2, *y2;
+	GFX_Batch batch;
 
 	/*
 	* Vertex array NULL check 
 	*/
 	if (vx == NULL) {
-		return (false);
+		return (-1);
 	}
 	if (vy == NULL) {
-		return (false);
+		return (-1);
 	}
 
 	/*
 	* Sanity check 
 	*/
 	if (n < 3) {
-		return (false);
+		return (-1);
 	}
 
 	/*
@@ -2652,20 +2950,20 @@ bool aapolygonRGBA(SDL_Renderer * renderer, const float * vx, const float * vy, 
 	y2++;
 
 	/*
-	* Draw 
+	* Draw (all edges in one batch)
 	*/
-	result = true;
+	_gfxBatchBegin(&batch, renderer, r, g, b, a);
 	for (i = 1; i < n; i++) {
-		result &= _aalineRGBA(renderer, *x1, *y1, *x2, *y2, r, g, b, a, false);
+		_aalineBatch(&batch, *x1, *y1, *x2, *y2, 0);
 		x1 = x2;
 		y1 = y2;
 		x2++;
 		y2++;
 	}
 
-	result &= _aalineRGBA(renderer, *x1, *y1, *vx, *vy, r, g, b, a, false);
+	_aalineBatch(&batch, *x1, *y1, *vx, *vy, 0);
 
-	return (result);
+	return (_gfxBatchEnd(&batch));
 }
 
 /* ---- Filled Polygon */
@@ -2673,34 +2971,174 @@ bool aapolygonRGBA(SDL_Renderer * renderer, const float * vx, const float * vy, 
 /*!
 \brief Internal helper qsort callback functions used in filled polygon drawing.
 
-\param a The surface to draw on.
-\param b Vertex array containing X coordinates of the points of the polygon.
+\param a Pointer to the first intersection.
+\param b Pointer to the second intersection.
 
 \returns Returns 0 if a==b, a negative number if a<b or a positive number if a>b.
 */
-Sint32 _gfxPrimitivesCompareInt(const void *a, const void *b)
+static int _gfxPrimitivesCompareInt(const void *a, const void *b)
 {
-	return (*(const Sint32 *) a) - (*(const Sint32 *) b);
+	const int ia = *(const int *)a;
+	const int ib = *(const int *)b;
+
+	/* No subtraction: the difference of two 16.16 intersections can overflow (PRIM-007) */
+	return (ia > ib) - (ia < ib);
 }
 
 /*!
-\brief Global vertex array to use if optional parameters are not given in filledPolygonMT calls.
-
-Note: Used for non-multithreaded (default) operation of filledPolygonMT.
+\brief Number of edge intersections that fit into the stack buffer of the polygon fill functions.
 */
-static Sint32 *gfxPrimitivesPolyIntsGlobal = NULL;
+#define GFX_POLY_STACK_INTS 64
 
 /*!
-\brief Flag indicating if global vertex array was already allocated.
+\brief Internal helper to get a buffer for the edge intersections of a polygon with n vertices.
 
-Note: Used for non-multithreaded (default) operation of filledPolygonMT.
+Without a caller-provided cache (polyInts or polyAllocated NULL) the stack buffer is used for small
+polygons and a temporary buffer is allocated for larger ones (no global state, PRIM-002). A
+caller-provided cache is grown with realloc as needed and remains owned by the caller.
+
+\param n Number of vertices of the polygon.
+\param stackInts Stack buffer with GFX_POLY_STACK_INTS entries.
+\param polyInts Optional caller-provided cache.
+\param polyAllocated Optional size of the caller-provided cache.
+
+\returns The buffer or NULL if out of memory.
 */
-static bool gfxPrimitivesPolyAllocatedGlobal = false;
+static int *_gfxPrimitivesPolyBuffer(int n, int *stackInts, int **polyInts, int *polyAllocated)
+{
+	int *buffer;
+
+	if (n > (int)(SDL_MAX_SINT32 / sizeof(int))) {
+		return NULL;
+	}
+	if ((polyInts == NULL) || (polyAllocated == NULL)) {
+		if (n <= GFX_POLY_STACK_INTS) {
+			return stackInts;
+		}
+		return (int *)SDL_malloc(sizeof(int) * (size_t)n);
+	}
+	if ((*polyAllocated >= n) && (*polyInts != NULL)) {
+		return *polyInts;
+	}
+	buffer = (int *)SDL_realloc((*polyAllocated > 0) ? *polyInts : NULL, sizeof(int) * (size_t)n);
+	if (buffer == NULL) {
+		/* The caller's cache is unchanged and remains valid (PRIM-006) */
+		return NULL;
+	}
+	*polyInts = buffer;
+	*polyAllocated = n;
+	return buffer;
+}
+
+/*!
+\brief Internal helper to release a buffer returned by _gfxPrimitivesPolyBuffer.
+*/
+static void _gfxPrimitivesPolyBufferFree(int *buffer, const int *stackInts, int **polyInts, int *polyAllocated)
+{
+	if (((polyInts == NULL) || (polyAllocated == NULL)) && (buffer != stackInts)) {
+		SDL_free(buffer);
+	}
+}
+
+/*!
+\brief Internal helper to get the range of rows and columns visible in the viewport and clip rectangle.
+
+Drawing coordinates are relative to the viewport and in logical (unscaled) units, like the rectangles
+returned by SDL_GetRenderViewport and SDL_GetRenderClipRect. One extra row/column on each side covers
+rounding with fractional scale factors; SDL clips anything drawn outside anyway (PERF-001).
+
+\param renderer The renderer to draw on.
+\param xmin Pointer to the first visible column.
+\param ymin Pointer to the first visible row.
+\param xmax Pointer to the last visible column.
+\param ymax Pointer to the last visible row.
+*/
+static void _gfxPrimitivesVisibleArea(SDL_Renderer *renderer, int *xmin, int *ymin, int *xmax, int *ymax)
+{
+	SDL_Rect viewport, clip;
+
+	*xmin = *ymin = -32768;
+	*xmax = *ymax = 32767;
+	if (SDL_GetRenderViewport(renderer, &viewport) && (viewport.w > 0) && (viewport.h > 0)) {
+		*xmin = -1;
+		*ymin = -1;
+		*xmax = viewport.w;
+		*ymax = viewport.h;
+	}
+	if (SDL_GetRenderClipRect(renderer, &clip) && (clip.w > 0) && (clip.h > 0)) {
+		*xmin = SDL_max(*xmin, clip.x - 1);
+		*ymin = SDL_max(*ymin, clip.y - 1);
+		*xmax = SDL_min(*xmax, clip.x + clip.w);
+		*ymax = SDL_min(*ymax, clip.y + clip.h);
+	}
+}
+/*!
+\brief Internal helper to compute the sorted intersections of the polygon edges with row y.
+
+The intersections are 16.16 fixed point x coordinates. The intermediate products use 64-bit math
+since they overflow int for polygons spanning more than 32767 pixels (PRIM-007); the results are
+between the edge endpoints and fit into an int.
+
+\param vx Vertex array containing X coordinates of the points of the polygon.
+\param vy Vertex array containing Y coordinates of the points of the polygon.
+\param n Number of points in the vertex array.
+\param y The row.
+\param maxy The largest Y coordinate of the polygon.
+\param ints Buffer for at least n intersections.
+
+\returns The number of intersections.
+*/
+static int _gfxPrimitivesPolyIntersections(const Sint16 *vx, const Sint16 *vy, int n, int y, int maxy, int *ints)
+{
+	int i, ind1, ind2;
+	int x1, y1, x2, y2;
+	int count = 0;
+
+	for (i = 0; i < n; i++) {
+		if (!i) {
+			ind1 = n - 1;
+			ind2 = 0;
+		} else {
+			ind1 = i - 1;
+			ind2 = i;
+		}
+		y1 = vy[ind1];
+		y2 = vy[ind2];
+		if (y1 < y2) {
+			x1 = vx[ind1];
+			x2 = vx[ind2];
+		} else if (y1 > y2) {
+			y2 = vy[ind1];
+			y1 = vy[ind2];
+			x2 = vx[ind1];
+			x1 = vx[ind2];
+		} else {
+			continue;
+		}
+		if (((y >= y1) && (y < y2)) || ((y == maxy) && (y > y1) && (y <= y2))) {
+			ints[count++] = (int)((((Sint64)65536 * (y - y1)) / (y2 - y1)) * (x2 - x1) + (Sint64)65536 * x1);
+		}
+	}
+
+	qsort(ints, count, sizeof(int), _gfxPrimitivesCompareInt);
+
+	return count;
+}
+
+/*!
+\brief Internal helper to round a 16.16 intersection (moved inwards by offset) to a pixel coordinate.
+*/
+static Sint16 _gfxPrimitivesPolyRound(int v, int offset)
+{
+	const Sint64 w = (Sint64)v + offset;
+
+	return (Sint16)((w >> 16) + ((w & 32768) >> 15));
+}
 
 /*!
 \brief Draw filled polygon with alpha blending (multi-threaded capable).
 
-Note: The last two parameters are optional; but are required for multithreaded operation.  
+Note: The last two parameters are optional. Without them a temporary buffer is used, which is thread-safe as well.
 
 \param renderer The renderer to draw on.
 \param vx Vertex array containing X coordinates of the points of the filled polygon.
@@ -2710,100 +3148,28 @@ Note: The last two parameters are optional; but are required for multithreaded o
 \param g The green value of the filled polygon to draw. 
 \param b The blue value of the filled polygon to draw. 
 \param a The alpha value of the filled polygon to draw.
-\param polyInts Preallocated, temporary vertex array used for sorting vertices. Required for multithreaded operation; set to NULL otherwise.
-\param polyAllocated Flag indicating if temporary vertex array was allocated. Required for multithreaded operation; set to NULL otherwise.
+\param polyInts Optional cache for the intersection buffer (initialize to NULL; release with SDL_free()), or NULL.
+\param polyAllocated Optional size of the cache (initialize to 0), or NULL.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool filledPolygonRGBAMT(SDL_Renderer * renderer, const float * vx, const float * vy, Sint32 n, Uint8 r, Uint8 g, Uint8 b, Uint8 a, Sint32 **polyInts, bool *polyAllocated)
+static int filledPolygonRGBAMT(SDL_Renderer *renderer, const Sint16 *vx, const Sint16 *vy, int n, Uint8 r, Uint8 g, Uint8 b, Uint8 a, int **polyInts, int *polyAllocated)
 {
-	bool result;
-	Sint32 i;
-	Sint32 y, xa, xb;
-	Sint32 miny, maxy;
-	Sint32 x1, y1;
-	Sint32 x2, y2;
-	Sint32 ind1, ind2;
-	Sint32 ints;
-	Sint32 *gfxPrimitivesPolyInts = NULL;
-	Sint32 *gfxPrimitivesPolyIntsNew = NULL;
-	bool gfxPrimitivesPolyAllocated = false;
+	int i, y, ints;
+	int miny, maxy, ystart, yend;
+	int xa, xb, tmp, prevx, visxmin, visxmax;
+	int stackInts[GFX_POLY_STACK_INTS];
+	int *buffer;
+	GFX_Batch batch;
 
 	/*
-	* Vertex array NULL check 
+	* Parameter checks
 	*/
-	if (vx == NULL) {
-		return (false);
+	if ((renderer == NULL) || (vx == NULL) || (vy == NULL)) {
+		return (-1);
 	}
-	if (vy == NULL) {
-		return (false);
-	}
-
-	/*
-	* Sanity check number of edges
-	*/
 	if (n < 3) {
-		return false;
-	}
-
-	/*
-	* Map polygon cache  
-	*/
-	if ((polyInts==NULL) || (polyAllocated==NULL)) {
-		/* Use global cache */
-		gfxPrimitivesPolyInts = gfxPrimitivesPolyIntsGlobal;
-		gfxPrimitivesPolyAllocated = gfxPrimitivesPolyAllocatedGlobal;
-	} else {
-		/* Use local cache */
-		gfxPrimitivesPolyInts = *polyInts;
-		gfxPrimitivesPolyAllocated = *polyAllocated;
-	}
-
-	/*
-	* Allocate temp array, only grow array 
-	*/
-	if (!gfxPrimitivesPolyAllocated) {
-		gfxPrimitivesPolyInts = (Sint32 *) malloc(sizeof(int) * n);
-		gfxPrimitivesPolyAllocated = n;
-	} else {
-		if (gfxPrimitivesPolyAllocated < n) {
-			gfxPrimitivesPolyIntsNew = (Sint32 *) realloc(gfxPrimitivesPolyInts, sizeof(int) * n);
-			if (!gfxPrimitivesPolyIntsNew) {
-				if (!gfxPrimitivesPolyInts) {
-					free(gfxPrimitivesPolyInts);
-					gfxPrimitivesPolyInts = NULL;
-				}
-				gfxPrimitivesPolyAllocated = 0;
-			} else {
-				gfxPrimitivesPolyInts = gfxPrimitivesPolyIntsNew;
-				gfxPrimitivesPolyAllocated = n;
-			}
-		}
-	}
-
-	/*
-	* Check temp array
-	*/
-	if (gfxPrimitivesPolyInts==NULL) {        
-		gfxPrimitivesPolyAllocated = 0;
-	}
-
-	/*
-	* Update cache variables
-	*/
-	if ((polyInts==NULL) || (polyAllocated==NULL)) { 
-		gfxPrimitivesPolyIntsGlobal =  gfxPrimitivesPolyInts;
-		gfxPrimitivesPolyAllocatedGlobal = gfxPrimitivesPolyAllocated;
-	} else {
-		*polyInts = gfxPrimitivesPolyInts;
-		*polyAllocated = gfxPrimitivesPolyAllocated;
-	}
-
-	/*
-	* Check temp array again
-	*/
-	if (gfxPrimitivesPolyInts==NULL) {
-		return false;
+		return -1;
 	}
 
 	/*
@@ -2820,57 +3186,56 @@ bool filledPolygonRGBAMT(SDL_Renderer * renderer, const float * vx, const float 
 	}
 
 	/*
+	* Set color 
+	*/
+	_gfxBatchBegin(&batch, renderer, r, g, b, a);
+
+	/*
+	* Only scan visible rows
+	*/
+	_gfxPrimitivesVisibleArea(renderer, &visxmin, &ystart, &visxmax, &yend);
+	ystart = SDL_max(ystart, miny);
+	yend = SDL_min(yend, maxy);
+	if (ystart > yend) {
+		return (_gfxBatchEnd(&batch));
+	}
+
+	buffer = _gfxPrimitivesPolyBuffer(n, stackInts, polyInts, polyAllocated);
+	if (buffer == NULL) {
+		return (-1);
+	}
+
+	/*
 	* Draw, scanning y 
 	*/
-	for (y = miny; (y <= maxy); y++) {
-		ints = 0;
-		for (i = 0; (i < n); i++) {
-			if (!i) {
-				ind1 = n - 1;
-				ind2 = 0;
-			} else {
-				ind1 = i - 1;
-				ind2 = i;
+	for (y = ystart; (y <= yend); y++) {
+		ints = _gfxPrimitivesPolyIntersections(vx, vy, n, y, maxy, buffer);
+		prevx = -0x7FFFFFFF;
+		for (i = 0; (i + 1 < ints); i += 2) {
+			xa = _gfxPrimitivesPolyRound(buffer[i], 1);
+			xb = _gfxPrimitivesPolyRound(buffer[i + 1], -1);
+			if (xa > xb) {
+				tmp = xa;
+				xa = xb;
+				xb = tmp;
 			}
-			y1 = vy[ind1];
-			y2 = vy[ind2];
-			if (y1 < y2) {
-				x1 = vx[ind1];
-				x2 = vx[ind2];
-			} else if (y1 > y2) {
-				y2 = vy[ind1];
-				y1 = vy[ind2];
-				x2 = vx[ind1];
-				x1 = vx[ind2];
-			} else {
+			/* Spans meeting at a vertex share a pixel: draw it once (PRIM-016) */
+			xa = SDL_max(xa, prevx + 1);
+			prevx = SDL_max(prevx, xb);
+			/* Skip invisible parts; the texture offset is derived from the start column */
+			xa = SDL_max(xa, visxmin);
+			xb = SDL_min(xb, visxmax);
+			if (xa > xb) {
 				continue;
 			}
-			if ( ((y >= y1) && (y < y2)) || ((y == maxy) && (y > y1) && (y <= y2)) ) {
-				gfxPrimitivesPolyInts[ints++] = ((65536 * (y - y1)) / (y2 - y1)) * (x2 - x1) + (65536 * x1);
-			} 	    
-		}
-
-		qsort(gfxPrimitivesPolyInts, ints, sizeof(int), _gfxPrimitivesCompareInt);
-
-		/*
-		* Set color 
-		*/
-		result = true;
-	    result &= SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
-		result &= SDL_SetRenderDrawColor(renderer, r, g, b, a);
-
-		for (i = 0; (i < ints); i += 2) {
-			xa = gfxPrimitivesPolyInts[i] + 1;
-			xa = (xa >> 16) + ((xa & 32768) >> 15);
-			xb = gfxPrimitivesPolyInts[i+1] - 1;
-			xb = (xb >> 16) + ((xb & 32768) >> 15);
-			result &= hline(renderer, xa, xb, y);
+			_gfxBatchHLine(&batch, (Sint16)xa, (Sint16)xb, (Sint16)y);
 		}
 	}
 
-	return result;
-}
+	_gfxPrimitivesPolyBufferFree(buffer, stackInts, polyInts, polyAllocated);
 
+	return (_gfxBatchEnd(&batch));
+}
 /*!
 \brief Draw filled polygon with alpha blending.
 
@@ -2880,12 +3245,11 @@ bool filledPolygonRGBAMT(SDL_Renderer * renderer, const float * vx, const float 
 \param n Number of points in the vertex array. Minimum number is 3.
 \param color The color value of the filled polygon to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool filledPolygonColor(SDL_Renderer * renderer, const float * vx, const float * vy, Sint32 n, Uint32 color)
+int filledPolygonColor(SDL_Renderer *renderer, const Sint16 *vx, const Sint16 *vy, int n, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return filledPolygonRGBAMT(renderer, vx, vy, n, c[0], c[1], c[2], c[3], NULL, NULL);
+	return filledPolygonRGBAMT(renderer, vx, vy, n, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color), NULL, NULL);
 }
 
 /*!
@@ -2900,14 +3264,28 @@ bool filledPolygonColor(SDL_Renderer * renderer, const float * vx, const float *
 \param b The blue value of the filed polygon to draw. 
 \param a The alpha value of the filled polygon to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool filledPolygonRGBA(SDL_Renderer * renderer, const float * vx, const float * vy, Sint32 n, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int filledPolygonRGBA(SDL_Renderer *renderer, const Sint16 *vx, const Sint16 *vy, int n, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
 	return filledPolygonRGBAMT(renderer, vx, vy, n, r, g, b, a, NULL, NULL);
 }
 
 /* ---- Textured Polygon */
+
+/*!
+\brief Internal function to copy a part of a texture with integer source and destination rectangles.
+
+\returns Returns 0 on success, -1 on failure.
+*/
+static int _gfxRenderTexture(SDL_Renderer *renderer, SDL_Texture *texture, const SDL_Rect *srcrect, const SDL_Rect *dstrect)
+{
+	SDL_FRect fsrc, fdst;
+
+	SDL_RectToFRect(srcrect, &fsrc);
+	SDL_RectToFRect(dstrect, &fdst);
+	return GFX_RESULT(SDL_RenderTexture(renderer, texture, &fsrc, &fdst));
+}
 
 /*!
 \brief Internal function to draw a textured horizontal line.
@@ -2922,17 +3300,17 @@ bool filledPolygonRGBA(SDL_Renderer * renderer, const float * vx, const float * 
 \param texture_dx The X offset for the texture lookup.
 \param texture_dy The Y offset for the textured lookup.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool _HLineTextured(SDL_Renderer *renderer, float x1, float x2, float y, SDL_Texture *texture, Sint32 texture_w, Sint32 texture_h, Sint32 texture_dx, Sint32 texture_dy)
+static int _HLineTextured(SDL_Renderer *renderer, Sint16 x1, Sint16 x2, Sint16 y, SDL_Texture *texture, int texture_w, int texture_h, int texture_dx, int texture_dy)
 {
-	float w;
-	float xtmp;
-	bool result = true;
-	Sint32 texture_x_walker;
-	Sint32 texture_y_start;
-	SDL_FRect source_rect,dst_rect;
-	Sint32 pixels_written,write_width;
+	int w;
+	Sint16 xtmp;
+	int result = 0;
+	int texture_x_walker;
+	int texture_y_start;
+	SDL_Rect source_rect, dst_rect;
+	int pixels_written, write_width;
 
 	/*
 	* Swap x1, x2 if required to ensure x1<=x2
@@ -2951,13 +3329,13 @@ bool _HLineTextured(SDL_Renderer *renderer, float x1, float x2, float y, SDL_Tex
 	/*
 	* Determine where in the texture we start drawing
 	*/
-	texture_x_walker = ((int)x1 - texture_dx)  % texture_w;
-	if (texture_x_walker < 0){
-		texture_x_walker = texture_w + texture_x_walker ;
+	texture_x_walker = (x1 - texture_dx) % texture_w;
+	if (texture_x_walker < 0) {
+		texture_x_walker = texture_w + texture_x_walker;
 	}
 
-	texture_y_start = ((int)y + texture_dy) % texture_h;
-	if (texture_y_start < 0){
+	texture_y_start = (y + texture_dy) % texture_h;
+	if (texture_y_start < 0) {
 		texture_y_start = texture_h + texture_y_start;
 	}
 
@@ -2972,34 +3350,34 @@ bool _HLineTextured(SDL_Renderer *renderer, float x1, float x2, float y, SDL_Tex
 
 	/* if there are enough pixels left in the current row of the texture */
 	/* draw it all at once */
-	if (w <= texture_w -texture_x_walker){
+	if (w <= texture_w - texture_x_walker) {
 		source_rect.w = w;
 		source_rect.x = texture_x_walker;
-		dst_rect.x= x1;
+		dst_rect.x = x1;
 		dst_rect.w = source_rect.w;
-		result = SDL_RenderTexture(renderer, texture, &source_rect, &dst_rect);
-	} else { 
+		result = _gfxRenderTexture(renderer, texture, &source_rect, &dst_rect);
+	} else {
 		/* we need to draw multiple times */
 		/* draw the first segment */
-		pixels_written = texture_w  - texture_x_walker;
+		pixels_written = texture_w - texture_x_walker;
 		source_rect.w = pixels_written;
 		source_rect.x = texture_x_walker;
-		dst_rect.x= x1;
+		dst_rect.x = x1;
 		dst_rect.w = source_rect.w;
-		result &= SDL_RenderTexture(renderer, texture, &source_rect, &dst_rect);
+		result |= _gfxRenderTexture(renderer, texture, &source_rect, &dst_rect);
 		write_width = texture_w;
 
 		/* now draw the rest */
 		/* set the source x to 0 */
 		source_rect.x = 0;
-		while (pixels_written < w){
+		while (pixels_written < w) {
 			if (write_width >= w - pixels_written) {
-				write_width =  w - pixels_written;
+				write_width = w - pixels_written;
 			}
 			source_rect.w = write_width;
 			dst_rect.x = x1 + pixels_written;
 			dst_rect.w = source_rect.w;
-			result &= SDL_RenderTexture(renderer, texture, &source_rect, &dst_rect);
+			result |= _gfxRenderTexture(renderer, texture, &source_rect, &dst_rect);
 			pixels_written += write_width;
 		}
 	}
@@ -3015,169 +3393,106 @@ bool _HLineTextured(SDL_Renderer *renderer, float x1, float x2, float y, SDL_Tex
 \param vy array of x vector components
 \param n the amount of vectors in the vx and vy array
 \param texture the sdl surface to use to fill the polygon
-\param texture_dx the offset of the texture relative to the screeen. If you move the polygon 10 pixels 
-to the left and want the texture to apear the same you need to increase the texture_dx value
-\param texture_dy see texture_dx
-\param polyInts Preallocated temp array storage for vertex sorting (used for multi-threaded operation)
-\param polyAllocated Flag indicating oif the temp array was allocated (used for multi-threaded operation)
+\param texture_dx Horizontal texture offset: the pixel at x uses texture column (x - texture_dx) modulo the texture width.
+\param texture_dy Vertical texture offset: the pixel at y uses texture row (y + texture_dy) modulo the texture height.
+Note the different signs, kept for compatibility (PRIM-014). To move the texture together with a polygon moved
+by (mx, my), add mx to texture_dx and subtract my from texture_dy.
+\param polyInts Optional cache for the intersection buffer (initialize to NULL; release with SDL_free()), or NULL.
+\param polyAllocated Optional size of the cache (initialize to 0), or NULL.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool texturedPolygonMT(SDL_Renderer *renderer, const float * vx, const float * vy, Sint32 n,
-	SDL_Surface * texture, Sint32 texture_dx, Sint32 texture_dy, Sint32 **polyInts, bool *polyAllocated)
+static int texturedPolygonMT(SDL_Renderer *renderer, const Sint16 *vx, const Sint16 *vy, int n,
+	SDL_Surface *texture, int texture_dx, int texture_dy, int **polyInts, int *polyAllocated)
 {
-	bool result;
-	Sint32 i;
-	Sint32 y, xa, xb;
-	Sint32 minx,maxx,miny, maxy;
-	Sint32 x1, y1;
-	Sint32 x2, y2;
-	Sint32 ind1, ind2;
-	Sint32 ints;
-	Sint32 *gfxPrimitivesPolyInts = NULL;
-	Sint32 *gfxPrimitivesPolyIntsTemp = NULL;
-	Sint32 gfxPrimitivesPolyAllocated = 0;
+	int result;
+	int i, y, ints;
+	int miny, maxy, ystart, yend;
+	int xa, xb, tmp, prevx, visxmin, visxmax;
+	int stackInts[GFX_POLY_STACK_INTS];
+	int *buffer;
 	SDL_Texture *textureAsTexture = NULL;
 
 	/*
-	* Sanity check number of edges
+	* Parameter checks
 	*/
+	if ((renderer == NULL) || (vx == NULL) || (vy == NULL) || (texture == NULL)) {
+		return (-1);
+	}
 	if (n < 3) {
-		return false;
+		return -1;
 	}
 
 	/*
-	* Map polygon cache  
-	*/
-	if ((polyInts==NULL) || (polyAllocated==NULL)) {
-		/* Use global cache */
-		gfxPrimitivesPolyInts = gfxPrimitivesPolyIntsGlobal;
-		gfxPrimitivesPolyAllocated = gfxPrimitivesPolyAllocatedGlobal;
-	} else {
-		/* Use local cache */
-		gfxPrimitivesPolyInts = *polyInts;
-		gfxPrimitivesPolyAllocated = *polyAllocated;
-	}
-
-	/*
-	* Allocate temp array, only grow array 
-	*/
-	if (!gfxPrimitivesPolyAllocated) {
-		gfxPrimitivesPolyInts = (Sint32 *) malloc(sizeof(int) * n);
-		gfxPrimitivesPolyAllocated = n;
-	} else {
-		if (gfxPrimitivesPolyAllocated < n) {
-			gfxPrimitivesPolyIntsTemp = (Sint32 *) realloc(gfxPrimitivesPolyInts, sizeof(int) * n);
-			if (gfxPrimitivesPolyIntsTemp == NULL) {
-				/* Realloc failed - keeps original memory block, but fails this operation */
-				return(false);
-			}
-			gfxPrimitivesPolyInts = gfxPrimitivesPolyIntsTemp;
-			gfxPrimitivesPolyAllocated = n;
-		}
-	}
-
-	/*
-	* Check temp array
-	*/
-	if (gfxPrimitivesPolyInts==NULL) {        
-		gfxPrimitivesPolyAllocated = 0;
-	}
-
-	/*
-	* Update cache variables
-	*/
-	if ((polyInts==NULL) || (polyAllocated==NULL)) { 
-		gfxPrimitivesPolyIntsGlobal =  gfxPrimitivesPolyInts;
-		gfxPrimitivesPolyAllocatedGlobal = gfxPrimitivesPolyAllocated;
-	} else {
-		*polyInts = gfxPrimitivesPolyInts;
-		*polyAllocated = gfxPrimitivesPolyAllocated;
-	}
-
-	/*
-	* Check temp array again
-	*/
-	if (gfxPrimitivesPolyInts==NULL) {        
-		return false;
-	}
-
-	/*
-	* Determine X,Y minima,maxima 
+	* Determine Y maxima 
 	*/
 	miny = vy[0];
 	maxy = vy[0];
-	minx = vx[0];
-	maxx = vx[0];
 	for (i = 1; (i < n); i++) {
 		if (vy[i] < miny) {
 			miny = vy[i];
 		} else if (vy[i] > maxy) {
 			maxy = vy[i];
 		}
-		if (vx[i] < minx) {
-			minx = vx[i];
-		} else if (vx[i] > maxx) {
-			maxx = vx[i];
-		}
 	}
 
-    /* Create texture for drawing */
+	/*
+	* Only scan visible rows
+	*/
+	_gfxPrimitivesVisibleArea(renderer, &visxmin, &ystart, &visxmax, &yend);
+	ystart = SDL_max(ystart, miny);
+	yend = SDL_min(yend, maxy);
+	if (ystart > yend) {
+		return (0);
+	}
+
+	buffer = _gfxPrimitivesPolyBuffer(n, stackInts, polyInts, polyAllocated);
+	if (buffer == NULL) {
+		return (-1);
+	}
+
+	/* Create texture for drawing */
 	textureAsTexture = SDL_CreateTextureFromSurface(renderer, texture);
-	if (textureAsTexture == NULL)
-	{
-		return false;
+	if (textureAsTexture == NULL) {
+		_gfxPrimitivesPolyBufferFree(buffer, stackInts, polyInts, polyAllocated);
+		return -1;
 	}
 	SDL_SetTextureBlendMode(textureAsTexture, SDL_BLENDMODE_BLEND);
-	
+	SDL_SetTextureScaleMode(textureAsTexture, SDL_SCALEMODE_NEAREST);
+
 	/*
 	* Draw, scanning y 
 	*/
-	result = true;
-	for (y = miny; (y <= maxy); y++) {
-		ints = 0;
-		for (i = 0; (i < n); i++) {
-			if (!i) {
-				ind1 = n - 1;
-				ind2 = 0;
-			} else {
-				ind1 = i - 1;
-				ind2 = i;
+	result = 0;
+	for (y = ystart; (y <= yend); y++) {
+		ints = _gfxPrimitivesPolyIntersections(vx, vy, n, y, maxy, buffer);
+		prevx = -0x7FFFFFFF;
+		for (i = 0; (i + 1 < ints); i += 2) {
+			xa = _gfxPrimitivesPolyRound(buffer[i], 1);
+			xb = _gfxPrimitivesPolyRound(buffer[i + 1], -1);
+			if (xa > xb) {
+				tmp = xa;
+				xa = xb;
+				xb = tmp;
 			}
-			y1 = vy[ind1];
-			y2 = vy[ind2];
-			if (y1 < y2) {
-				x1 = vx[ind1];
-				x2 = vx[ind2];
-			} else if (y1 > y2) {
-				y2 = vy[ind1];
-				y1 = vy[ind2];
-				x2 = vx[ind1];
-				x1 = vx[ind2];
-			} else {
+			/* Spans meeting at a vertex share a pixel: draw it once (PRIM-016) */
+			xa = SDL_max(xa, prevx + 1);
+			prevx = SDL_max(prevx, xb);
+			/* Skip invisible parts; the texture offset is derived from the start column */
+			xa = SDL_max(xa, visxmin);
+			xb = SDL_min(xb, visxmax);
+			if (xa > xb) {
 				continue;
 			}
-			if ( ((y >= y1) && (y < y2)) || ((y == maxy) && (y > y1) && (y <= y2)) ) {
-				gfxPrimitivesPolyInts[ints++] = ((65536 * (y - y1)) / (y2 - y1)) * (x2 - x1) + (65536 * x1);
-			} 
-		}
-
-		qsort(gfxPrimitivesPolyInts, ints, sizeof(int), _gfxPrimitivesCompareInt);
-
-		for (i = 0; (i < ints); i += 2) {
-			xa = gfxPrimitivesPolyInts[i] + 1;
-			xa = (xa >> 16) + ((xa & 32768) >> 15);
-			xb = gfxPrimitivesPolyInts[i+1] - 1;
-			xb = (xb >> 16) + ((xb & 32768) >> 15);
-			result &= _HLineTextured(renderer, xa, xb, y, textureAsTexture, texture->w, texture->h, texture_dx, texture_dy);
+			result |= _HLineTextured(renderer, (Sint16)xa, (Sint16)xb, (Sint16)y, textureAsTexture, texture->w, texture->h, texture_dx, texture_dy);
 		}
 	}
 
 	SDL_DestroyTexture(textureAsTexture);
+	_gfxPrimitivesPolyBufferFree(buffer, stackInts, polyInts, polyAllocated);
 
-	return result;
+	return (result);
 }
-
 /*!
 \brief Draws a polygon filled with the given texture. 
 
@@ -3188,13 +3503,14 @@ This standard version is calling multithreaded versions with NULL cache paramete
 \param vy array of x vector components
 \param n the amount of vectors in the vx and vy array
 \param texture the sdl surface to use to fill the polygon
-\param texture_dx the offset of the texture relative to the screeen. if you move the polygon 10 pixels 
-to the left and want the texture to apear the same you need to increase the texture_dx value
-\param texture_dy see texture_dx
+\param texture_dx Horizontal texture offset: the pixel at x uses texture column (x - texture_dx) modulo the texture width.
+\param texture_dy Vertical texture offset: the pixel at y uses texture row (y + texture_dy) modulo the texture height.
+Note the different signs, kept for compatibility (PRIM-014). To move the texture together with a polygon moved
+by (mx, my), add mx to texture_dx and subtract my from texture_dy.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool texturedPolygon(SDL_Renderer *renderer, const float * vx, const float * vy, Sint32 n, SDL_Surface *texture, Sint32 texture_dx, Sint32 texture_dy)
+int texturedPolygon(SDL_Renderer *renderer, const Sint16 *vx, const Sint16 *vy, int n, SDL_Surface *texture, int texture_dx, int texture_dy)
 {
 	/*
 	* Draw
@@ -3206,8 +3522,35 @@ bool texturedPolygon(SDL_Renderer *renderer, const float * vx, const float * vy,
 
 /*!
 \brief Global cache for NxM pixel font textures created at runtime.
+
+The textures belong to gfxPrimitivesFontRenderer. When text is drawn with another renderer the cache
+is reset without destroying the textures (they are released by SDL together with their renderer).
 */
 static SDL_Texture *gfxPrimitivesFont[256];
+
+/*!
+\brief Renderer that owns the textures in gfxPrimitivesFont.
+*/
+static SDL_Renderer *gfxPrimitivesFontRenderer = NULL;
+
+/*!
+\brief Resets the glyph texture cache.
+
+\param destroy Destroy the cached textures (only valid while their renderer exists) or just forget them.
+*/
+static void _gfxPrimitivesFontCacheReset(int destroy)
+{
+	int i;
+	for (i = 0; i < 256; i++) {
+		if (gfxPrimitivesFont[i] && destroy) {
+			SDL_DestroyTexture(gfxPrimitivesFont[i]);
+		}
+		gfxPrimitivesFont[i] = NULL;
+	}
+	if (destroy) {
+		gfxPrimitivesFontRenderer = NULL;
+	}
+}
 
 /*!
 \brief Pointer to the current font data. Default is a 8x8 pixel internal font. 
@@ -3250,6 +3593,11 @@ static Uint32 charRotation = 0;
 static Uint32 charSize = 8;
 
 /*!
+\brief Largest glyph width or height accepted by gfxPrimitivesSetFont.
+*/
+#define GFX_FONT_MAX_SIZE 4096
+
+/*!
 \brief Sets or resets the current global font data.
 
 The font data array is organized in follows: 
@@ -3259,14 +3607,17 @@ The font data array is organized in follows:
 [bit n] = [0 for transparent pixel|1 for colored pixel]
 
 \param fontdata Pointer to array of font data. Set to NULL, to reset global font to the default 8x8 font.
-\param cw Width of character in bytes. Ignored if fontdata==NULL.
-\param ch Height of character in bytes. Ignored if fontdata==NULL.
+The data is used directly (not copied) and must stay valid while the font is set.
+\param cw Width of a character in pixels (1 to 4096). Ignored if fontdata==NULL.
+\param ch Height of a character in pixels (1 to 4096). Ignored if fontdata==NULL. Invalid sizes select the built-in 8x8 font.
+
+Glyphs are cached as textures of the renderer that draws text. Calling this function releases the
+cache: call gfxPrimitivesSetFont(NULL, 0, 0) before destroying a renderer that was used to draw text.
 */
 void gfxPrimitivesSetFont(const void *fontdata, Uint32 cw, Uint32 ch)
 {
-	Sint32 i;
-
-	if ((fontdata) && (cw) && (ch)) {
+	/* Glyphs larger than GFX_FONT_MAX_SIZE are rejected like a NULL font (size math stays in range) */
+	if ((fontdata) && (cw) && (ch) && (cw <= GFX_FONT_MAX_SIZE) && (ch <= GFX_FONT_MAX_SIZE)) {
 		currentFontdata = (unsigned char *)fontdata;
 		charWidth = cw;
 		charHeight = ch;
@@ -3276,28 +3627,20 @@ void gfxPrimitivesSetFont(const void *fontdata, Uint32 cw, Uint32 ch)
 		charHeight = 8;
 	}
 
-	charPitch = (charWidth+7)/8;
+	charPitch = (charWidth + 7) / 8;
 	charSize = charPitch * charHeight;
 
 	/* Maybe flip width/height for rendering */
-	if ((charRotation==1) || (charRotation==3))
-	{
+	if ((charRotation == 1) || (charRotation == 3)) {
 		charWidthLocal = charHeight;
 		charHeightLocal = charWidth;
-	}
-	else
-	{
+	} else {
 		charWidthLocal = charWidth;
 		charHeightLocal = charHeight;
 	}
 
-	/* Clear character cache */
-	for (i = 0; i < 256; i++) {
-		if (gfxPrimitivesFont[i]) {
-			SDL_DestroyTexture(gfxPrimitivesFont[i]);
-			gfxPrimitivesFont[i] = NULL;
-		}
-	}
+	/* Release the character cache */
+	_gfxPrimitivesFontCacheReset(1);
 }
 
 /*!
@@ -3310,33 +3653,22 @@ Changing the rotation, will reset the character cache.
 */
 void gfxPrimitivesSetFontRotation(Uint32 rotation)
 {
-	Sint32 i;
-
 	rotation = rotation & 3;
-	if (charRotation != rotation)
-	{
+	if (charRotation != rotation) {
 		/* Store rotation */
 		charRotation = rotation;
 
 		/* Maybe flip width/height for rendering */
-		if ((charRotation==1) || (charRotation==3))
-		{
+		if ((charRotation == 1) || (charRotation == 3)) {
 			charWidthLocal = charHeight;
 			charHeightLocal = charWidth;
-		}
-		else
-		{
+		} else {
 			charWidthLocal = charWidth;
 			charHeightLocal = charHeight;
 		}
 
-		/* Clear character cache */
-		for (i = 0; i < 256; i++) {
-			if (gfxPrimitivesFont[i]) {
-				SDL_DestroyTexture(gfxPrimitivesFont[i]);
-				gfxPrimitivesFont[i] = NULL;
-			}
-		}
+		/* Release the character cache */
+		_gfxPrimitivesFontCacheReset(1);
 	}
 }
 
@@ -3352,13 +3684,13 @@ void gfxPrimitivesSetFontRotation(Uint32 rotation)
 \param b The blue value of the character to draw. 
 \param a The alpha value of the character to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool characterRGBA(SDL_Renderer *renderer, float x, float y, char c, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int characterRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, char c, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	SDL_FRect srect;
-	SDL_FRect drect;
-	bool result;
+	SDL_Rect srect;
+	SDL_Rect drect;
+	int result;
 	Uint32 ix, iy;
 	const unsigned char *charpos;
 	Uint8 *curpos;
@@ -3385,8 +3717,14 @@ bool characterRGBA(SDL_Renderer *renderer, float x, float y, char c, Uint8 r, Ui
 	drect.w = charWidthLocal;
 	drect.h = charHeightLocal;
 
+	/* The cached textures belong to one renderer (FONT-001) */
+	if (renderer != gfxPrimitivesFontRenderer) {
+		_gfxPrimitivesFontCacheReset(0);
+		gfxPrimitivesFontRenderer = renderer;
+	}
+
 	/* Character index in cache */
-	ci = (unsigned char) c;
+	ci = (unsigned char)c;
 
 	/*
 	* Create new charWidth x charHeight bitmap surface if not already present.
@@ -3396,14 +3734,13 @@ bool characterRGBA(SDL_Renderer *renderer, float x, float y, char c, Uint8 r, Ui
 		/*
 		* Redraw character into surface
 		*/
-		character =	SDL_CreateSurface(
-			charWidth, charHeight, SDL_PIXELFORMAT_RGBA8888);
+		character = SDL_CreateSurface((int)charWidth, (int)charHeight, SDL_PIXELFORMAT_RGBA8888);
 		if (character == NULL) {
-			return (false);
+			return (-1);
 		}
 
-		charpos = currentFontdata + ci * charSize;
-				linepos = (Uint8 *)character->pixels;
+		charpos = currentFontdata + (size_t)ci * charSize;
+		linepos = (Uint8 *)character->pixels;
 		pitch = character->pitch;
 
 		/*
@@ -3429,8 +3766,7 @@ bool characterRGBA(SDL_Renderer *renderer, float x, float y, char c, Uint8 r, Ui
 		}
 
 		/* Maybe rotate and replace cached image */
-		if (charRotation>0)
-		{
+		if (charRotation > 0) {
 			rotatedCharacter = rotateSurface90Degrees(character, charRotation);
 			SDL_DestroySurface(character);
 			character = rotatedCharacter;
@@ -3444,21 +3780,22 @@ bool characterRGBA(SDL_Renderer *renderer, float x, float y, char c, Uint8 r, Ui
 		* Check pointer 
 		*/
 		if (gfxPrimitivesFont[ci] == NULL) {
-			return (false);
+			return (-1);
 		}
+		SDL_SetTextureScaleMode(gfxPrimitivesFont[ci], SDL_SCALEMODE_NEAREST);
 	}
 
 	/*
 	* Set color 
 	*/
-	result = true;
-	result &= SDL_SetTextureColorMod(gfxPrimitivesFont[ci], r, g, b);
-	result &= SDL_SetTextureAlphaMod(gfxPrimitivesFont[ci], a);
+	result = 0;
+	result |= GFX_RESULT(SDL_SetTextureColorMod(gfxPrimitivesFont[ci], r, g, b));
+	result |= GFX_RESULT(SDL_SetTextureAlphaMod(gfxPrimitivesFont[ci], a));
 
 	/*
 	* Draw texture onto destination 
 	*/
-	result &= SDL_RenderTexture(renderer, gfxPrimitivesFont[ci], &srect, &drect);
+	result |= _gfxRenderTexture(renderer, gfxPrimitivesFont[ci], &srect, &drect);
 
 	return (result);
 }
@@ -3473,12 +3810,11 @@ bool characterRGBA(SDL_Renderer *renderer, float x, float y, char c, Uint8 r, Ui
 \param c The character to draw.
 \param color The color value of the character to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool characterColor(SDL_Renderer * renderer, float x, float y, char c, Uint32 color)
+int characterColor(SDL_Renderer *renderer, Sint16 x, Sint16 y, char c, Uint32 color)
 {
-	Uint8 *co = (Uint8 *)&color; 
-	return characterRGBA(renderer, x, y, c, co[0], co[1], co[2], co[3]);
+	return characterRGBA(renderer, x, y, c, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 
@@ -3494,12 +3830,11 @@ of the character width of the current global font.
 \param s The string to draw.
 \param color The color value of the string to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool stringColor(SDL_Renderer * renderer, float x, float y, const char *s, Uint32 color)
+int stringColor(SDL_Renderer *renderer, Sint16 x, Sint16 y, const char *s, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return stringRGBA(renderer, x, y, s, c[0], c[1], c[2], c[3]);
+	return stringRGBA(renderer, x, y, s, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -3514,31 +3849,32 @@ bool stringColor(SDL_Renderer * renderer, float x, float y, const char *s, Uint3
 \param b The blue value of the string to draw. 
 \param a The alpha value of the string to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool stringRGBA(SDL_Renderer * renderer, float x, float y, const char *s, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int stringRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, const char *s, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	bool result = true;
-	float curx = x;
-	float cury = y;
+	int result = 0;
+	Sint16 curx = x;
+	Sint16 cury = y;
 	const char *curchar = s;
 
-	while (*curchar && result) {
-		result &= characterRGBA(renderer, curx, cury, *curchar, r, g, b, a);
-		switch (charRotation)
-		{
-		case 0:
-			curx += charWidthLocal;
-			break;
-		case 2:
-			curx -= charWidthLocal;
-			break;
-		case 1:
-			cury += charHeightLocal;
-			break;
-		case 3:
-			cury -= charHeightLocal;
-			break;
+	while (*curchar && !result) {
+		result |= characterRGBA(renderer, curx, cury, *curchar, r, g, b, a);
+		switch (charRotation) {
+			case 0:
+				curx = (Sint16)(curx + (int)charWidthLocal);
+				break;
+			case 2:
+				curx = (Sint16)(curx - (int)charWidthLocal);
+				break;
+			case 1:
+				cury = (Sint16)(cury + (int)charHeightLocal);
+				break;
+			case 3:
+				cury = (Sint16)(cury - (int)charHeightLocal);
+				break;
+			default:
+				break;
 		}
 		curchar++;
 	}
@@ -3557,35 +3893,35 @@ bool stringRGBA(SDL_Renderer * renderer, float x, float y, const char *s, Uint8 
 
 \returns Interpolated value at position t, value[0] when t<0, value[n-1] when t>n.
 */
-double _evaluateBezier (double *data, Sint32 ndata, double t)
+static double _evaluateBezier(double *data, int ndata, double t)
 {
 	double mu, result;
-	Sint32 n,k,kn,nn,nkn;
-	double blend,muk,munk;
+	int n, k, kn, nn, nkn;
+	double blend, muk, munk;
 
 	/* Sanity check bounds */
-	if (t<0.0) {
-		return(data[0]);
+	if (t < 0.0) {
+		return (data[0]);
 	}
-	if (t>=(double)ndata) {
-		return(data[ndata-1]);
+	if (t >= (double)ndata) {
+		return (data[ndata - 1]);
 	}
 
-	/* Adjust t to the range 0.0 to 1.0 */ 
-	mu=t/(double)ndata;
+	/* Adjust t to the range 0.0 to 1.0 */
+	mu = t / (double)ndata;
 
 	/* Calculate interpolate */
-	n=ndata-1;
-	result=0.0;
+	n = ndata - 1;
+	result = 0.0;
 	muk = 1;
-	munk = pow(1-mu,(double)n);
-	for (k=0;k<=n;k++) {
+	munk = pow(1 - mu, (double)n);
+	for (k = 0; k <= n; k++) {
 		nn = n;
 		kn = k;
 		nkn = n - k;
 		blend = muk * munk;
 		muk *= mu;
-		munk /= (1-mu);
+		munk /= (1 - mu);
 		while (nn >= 1) {
 			blend *= nn;
 			nn--;
@@ -3614,12 +3950,11 @@ double _evaluateBezier (double *data, Sint32 ndata, double t)
 \param s Number of steps for the interpolation. Minimum number is 2.
 \param color The color value of the bezier curve to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool bezierColor(SDL_Renderer * renderer, const float * vx, const float * vy, Sint32 n, Sint32 s, Uint32 color)
+int bezierColor(SDL_Renderer *renderer, const Sint16 *vx, const Sint16 *vy, int n, int s, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return bezierRGBA(renderer, vx, vy, n, s, c[0], c[1], c[2], c[3]);
+	return bezierRGBA(renderer, vx, vy, n, s, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -3635,70 +3970,87 @@ bool bezierColor(SDL_Renderer * renderer, const float * vx, const float * vy, Si
 \param b The blue value of the bezier curve to draw. 
 \param a The alpha value of the bezier curve to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool bezierRGBA(SDL_Renderer * renderer, const float * vx, const float * vy, Sint32 n, Sint32 s, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int bezierRGBA(SDL_Renderer *renderer, const Sint16 *vx, const Sint16 *vy, int n, int s, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	bool result;
-	Sint32 i;
+	int result;
+	int i;
 	double *x, *y, t, stepsize;
-	float x1, y1, x2, y2;
+	Sint16 x2, y2;
+	SDL_FPoint *points;
+	int npoints;
 
 	/*
 	* Sanity check 
 	*/
 	if (n < 3) {
-		return (false);
+		return (-1);
 	}
 	if (s < 2) {
-		return (false);
+		return (-1);
 	}
 
 	/*
 	* Variable setup 
 	*/
-	stepsize=(double)1.0/(double)s;
+	stepsize = (double)1.0 / (double)s;
 
 	/* Transfer vertices into float arrays */
-	if ((x=(double *)malloc(sizeof(double)*(n+1)))==NULL) {
-		return(false);
+	if ((x = (double *)SDL_malloc(sizeof(double) * (n + 1))) == NULL) {
+		return (-1);
 	}
-	if ((y=(double *)malloc(sizeof(double)*(n+1)))==NULL) {
-		free(x);
-		return(false);
-	}    
-	for (i=0; i<n; i++) {
-		x[i]=(double)vx[i];
-		y[i]=(double)vy[i];
-	}      
-	x[n]=(double)vx[0];
-	y[n]=(double)vy[0];
+	if ((y = (double *)SDL_malloc(sizeof(double) * (n + 1))) == NULL) {
+		SDL_free(x);
+		return (-1);
+	}
+	if ((points = (SDL_FPoint *)SDL_malloc(sizeof(SDL_FPoint) * ((size_t)n * (size_t)s + 2))) == NULL) {
+		SDL_free(x);
+		SDL_free(y);
+		return (-1);
+	}
+	for (i = 0; i < n; i++) {
+		x[i] = (double)vx[i];
+		y[i] = (double)vy[i];
+	}
+	x[n] = (double)vx[0];
+	y[n] = (double)vy[0];
 
 	/*
 	* Set color 
 	*/
-	result = true;
-	result &= SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND);
-	result &= SDL_SetRenderDrawColor(renderer, r, g, b, a);
+	result = 0;
+	result |= GFX_RESULT(SDL_SetRenderDrawBlendMode(renderer, (a == 255) ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND));
+	result |= GFX_RESULT(SDL_SetRenderDrawColor(renderer, r, g, b, a));
 
 	/*
 	* Draw 
 	*/
-	t=0.0;
-	x1=(Sint32)lrint(_evaluateBezier(x,n+1,t));
-	y1=(Sint32)lrint(_evaluateBezier(y,n+1,t));
-	for (i = 0; i <= (n*s); i++) {
+	/* One polyline: consecutive segments share their end points, which must be drawn once (PRIM-016) */
+	t = 0.0;
+	points[0].x = (float)(Sint16)lrint(_evaluateBezier(x, n + 1, t));
+	points[0].y = (float)(Sint16)lrint(_evaluateBezier(y, n + 1, t));
+	npoints = 1;
+	for (i = 0; i <= (n * s); i++) {
 		t += stepsize;
-		x2=(Sint32)_evaluateBezier(x,n,t);
-		y2=(Sint32)_evaluateBezier(y,n,t);
-		result &= line(renderer, x1, y1, x2, y2);
-		x1 = x2;
-		y1 = y2;
+		x2 = (Sint16)_evaluateBezier(x, n, t);
+		y2 = (Sint16)_evaluateBezier(y, n, t);
+		if (((float)x2 != points[npoints - 1].x) || ((float)y2 != points[npoints - 1].y)) {
+			points[npoints].x = (float)x2;
+			points[npoints].y = (float)y2;
+			npoints++;
+		}
+	}
+	if (npoints == 1) {
+		result |= GFX_RESULT(SDL_RenderPoint(renderer, points[0].x, points[0].y));
+	} else {
+		result |= GFX_RESULT(SDL_RenderLines(renderer, points, npoints));
 	}
 
 	/* Clean up temporary array */
-	free(x);
-	free(y);
+	SDL_free(points);
+	SDL_free(x);
+	SDL_free(y);
 
 	return (result);
 }
@@ -3715,12 +4067,11 @@ bool bezierRGBA(SDL_Renderer * renderer, const float * vx, const float * vy, Sin
 \param width Width of the line in pixels. Must be >0.
 \param color The color value of the line to draw (0xRRGGBBAA). 
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool thickLineColor(SDL_Renderer *renderer, float x1, float y1, float x2, float y2, float width, Uint32 color)
+int thickLineColor(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Uint8 width, Uint32 color)
 {
-	Uint8 *c = (Uint8 *)&color; 
-	return thickLineRGBA(renderer, x1, y1, x2, y2, width, c[0], c[1], c[2], c[3]);
+	return thickLineRGBA(renderer, x1, y1, x2, y2, width, GFX_COLOR_R(color), GFX_COLOR_G(color), GFX_COLOR_B(color), GFX_COLOR_A(color));
 }
 
 /*!
@@ -3737,41 +4088,42 @@ bool thickLineColor(SDL_Renderer *renderer, float x1, float y1, float x2, float 
 \param b The blue value of the character to draw. 
 \param a The alpha value of the character to draw.
 
-\returns Returns true on success, false on failure.
+\returns Returns 0 on success, -1 on failure.
 */
-bool thickLineRGBA(SDL_Renderer *renderer, float x1, float y1, float x2, float y2, float width, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+int thickLineRGBA(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Uint8 width, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
-	Sint32 wh;
+	int wh;
 	double dx, dy, dx1, dy1, dx2, dy2;
 	double l, wl2, nx, ny, ang, adj;
-	float px[4], py[4];
+	Sint16 px[4], py[4];
 
 	if (renderer == NULL) {
-		return false;
+		return -1;
 	}
 
 	if (width < 1) {
-		return false;
+		return -1;
 	}
 
 	/* Special case: thick "point" */
 	if ((x1 == x2) && (y1 == y2)) {
+		/* A width x width square centered on the point (PRIM-010) */
 		wh = width / 2;
-		return boxRGBA(renderer, x1 - wh, y1 - wh, x2 + width, y2 + width, r, g, b, a);		
+		return boxRGBA(renderer, (Sint16)(x1 - wh), (Sint16)(y1 - wh), (Sint16)(x1 - wh + width - 1), (Sint16)(y1 - wh + width - 1), r, g, b, a);
 	}
 
 	/* Special case: width == 1 */
 	if (width == 1) {
-		return lineRGBA(renderer, x1, y1, x2, y2, r, g, b, a);		
+		return lineRGBA(renderer, x1, y1, x2, y2, r, g, b, a);
 	}
 
 	/* Calculate offsets for sides */
 	dx = (double)(x2 - x1);
 	dy = (double)(y2 - y1);
-	l = SDL_sqrt(dx*dx + dy*dy);
+	l = SDL_sqrt(dx * dx + dy * dy);
 	ang = SDL_atan2(dx, dy);
 	adj = 0.1 + 0.9 * SDL_fabs(SDL_cos(2.0 * ang));
-	wl2 = ((double)width - adj)/(2.0 * l);
+	wl2 = ((double)width - adj) / (2.0 * l);
 	nx = dx * wl2;
 	ny = dy * wl2;
 
@@ -3780,14 +4132,14 @@ bool thickLineRGBA(SDL_Renderer *renderer, float x1, float y1, float x2, float y
 	dy1 = (double)y1;
 	dx2 = (double)x2;
 	dy2 = (double)y2;
-	px[0] = (float)(dx1 + ny);
-	px[1] = (float)(dx1 - ny);
-	px[2] = (float)(dx2 - ny);
-	px[3] = (float)(dx2 + ny);
-	py[0] = (float)(dy1 - nx);
-	py[1] = (float)(dy1 + nx);
-	py[2] = (float)(dy2 + nx);
-	py[3] = (float)(dy2 - nx);
+	px[0] = (Sint16)(dx1 + ny);
+	px[1] = (Sint16)(dx1 - ny);
+	px[2] = (Sint16)(dx2 - ny);
+	px[3] = (Sint16)(dx2 + ny);
+	py[0] = (Sint16)(dy1 - nx);
+	py[1] = (Sint16)(dy1 + nx);
+	py[2] = (Sint16)(dy2 + nx);
+	py[3] = (Sint16)(dy2 - nx);
 
 	/* Draw polygon */
 	return filledPolygonRGBA(renderer, px, py, 4, r, g, b, a);

@@ -1,0 +1,120 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "installDir": "${sourceParentDir}/install/sdl3",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "${sourceParentDir}/install/sdl3",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "windows",
+      "hidden": true,
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "architecture": { "value": "x64", "strategy": "external" },
+      "toolset": { "value": "host=x64", "strategy": "external" },
+      "cacheVariables": { "CMAKE_C_COMPILER": "cl" }
+    },
+    {
+      "name": "linux",
+      "hidden": true,
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+    {
+      "name": "win-debug",
+      "displayName": "Windows x64 Debug (MSVC)",
+      "inherits": "windows",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "win-release",
+      "displayName": "Windows x64 RelWithDebInfo (MSVC)",
+      "inherits": "windows",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+    },
+    {
+      "name": "win-analyze",
+      "displayName": "Windows x64 MSVC /analyze (static analysis)",
+      "inherits": "windows",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "SDL3GFX_ANALYZE": "ON",
+        "SDL3GFX_DEMOS": "OFF",
+        "SDL3GFX_TESTS": "OFF"
+      }
+    },
+    {
+      "name": "win-fuzz",
+      "displayName": "Windows x64 libFuzzer + AddressSanitizer (MSVC)",
+      "inherits": "windows",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "SDL3GFX_FUZZ": "ON",
+        "SDL3GFX_SHARED": "OFF",
+        "SDL3GFX_STATIC": "ON",
+        "SDL3GFX_INSTALL": "OFF",
+        "SDL3GFX_DEMOS": "OFF",
+        "SDL3GFX_BENCH": "OFF"
+      }
+    },
+    {
+      "name": "linux-fuzz",
+      "displayName": "Linux libFuzzer + ASan/UBSan (clang)",
+      "inherits": "linux",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "SDL3GFX_FUZZ": "ON",
+        "SDL3GFX_SHARED": "OFF",
+        "SDL3GFX_STATIC": "ON",
+        "SDL3GFX_INSTALL": "OFF",
+        "SDL3GFX_DEMOS": "OFF",
+        "SDL3GFX_BENCH": "OFF"
+      }
+    },
+    {
+      "name": "linux-debug",
+      "displayName": "Linux Debug",
+      "inherits": "linux",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux RelWithDebInfo",
+      "inherits": "linux",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "win-debug", "configurePreset": "win-debug" },
+    { "name": "win-release", "configurePreset": "win-release" },
+    { "name": "win-analyze", "configurePreset": "win-analyze" },
+    { "name": "win-fuzz", "configurePreset": "win-fuzz" },
+    { "name": "linux-fuzz", "configurePreset": "linux-fuzz" },
+    { "name": "linux-debug", "configurePreset": "linux-debug" },
+    { "name": "linux-release", "configurePreset": "linux-release" }
+  ],
+  "testPresets": [
+    {
+      "name": "test-base",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error", "stopOnFailure": false },
+      "filter": { "exclude": { "label": "timing" } }
+    },
+    { "name": "win-debug", "inherits": "test-base", "configurePreset": "win-debug" },
+    { "name": "win-release", "inherits": "test-base", "configurePreset": "win-release" },
+    { "name": "win-fuzz", "inherits": "test-base", "configurePreset": "win-fuzz" },
+    { "name": "linux-fuzz", "inherits": "test-base", "configurePreset": "linux-fuzz" },
+    { "name": "linux-debug", "inherits": "test-base", "configurePreset": "linux-debug" },
+    { "name": "linux-release", "inherits": "test-base", "configurePreset": "linux-release" }
+  ]
+}
