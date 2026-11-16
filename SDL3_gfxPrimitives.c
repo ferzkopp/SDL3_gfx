@@ -99,20 +99,6 @@ static int _gfxDrawLine(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2,
 	return GFX_RESULT(SDL_RenderLine(renderer, x1, y1, x2, y2));
 }
 /*!
-\brief Draw pixel  in currently set color.
-
-\param renderer The renderer to draw on.
-\param x X (horizontal) coordinate of the pixel.
-\param y Y (vertical) coordinate of the pixel.
-
-\returns Returns 0 on success, -1 on failure.
-*/
-static int pixel(SDL_Renderer *renderer, Sint16 x, Sint16 y)
-{
-	return GFX_RESULT(SDL_RenderPoint(renderer, x, y));
-}
-
-/*!
 \brief Draw pixel with blending enabled if a<255.
 
 \param renderer The renderer to draw on.
@@ -149,53 +135,7 @@ int pixelRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Uint8 r, Uint8 g, Uint
 	return result;
 }
 
-/*!
-\brief Draw pixel with blending enabled and using alpha weight on color.
-
-\param renderer The renderer to draw on.
-\param x The horizontal coordinate of the pixel.
-\param y The vertical position of the pixel.
-\param r The red color value of the pixel to draw. 
-\param g The green color value of the pixel to draw.
-\param b The blue color value of the pixel to draw.
-\param a The alpha value of the pixel to draw.
-\param weight The weight multiplied into the alpha value of the pixel.
-
-\returns Returns 0 on success, -1 on failure.
-*/
-static int pixelRGBAWeight(SDL_Renderer *renderer, Sint16 x, Sint16 y, Uint8 r, Uint8 g, Uint8 b, Uint8 a, Uint32 weight)
-{
-	/*
-	* Modify Alpha by weight 
-	*/
-	Uint32 ax = a;
-	ax = ((ax * weight) >> 8);
-	if (ax > 255) {
-		a = 255;
-	} else {
-		a = (Uint8)(ax & 0x000000ff);
-	}
-
-	return pixelRGBA(renderer, x, y, r, g, b, a);
-}
-
 /* ---- Hline */
-
-/*!
-\brief Draw horizontal line in currently set color
-
-\param renderer The renderer to draw on.
-\param x1 X coordinate of the first point (i.e. left) of the line.
-\param x2 X coordinate of the second point (i.e. right) of the line.
-\param y Y coordinate of the points of the line.
-
-\returns Returns 0 on success, -1 on failure.
-*/
-static int hline(SDL_Renderer *renderer, Sint16 x1, Sint16 x2, Sint16 y)
-{
-	return _gfxDrawLine(renderer, x1, y, x2, y);
-}
-
 
 /*!
 \brief Draw horizontal line with blending.
@@ -237,21 +177,6 @@ int hlineRGBA(SDL_Renderer *renderer, Sint16 x1, Sint16 x2, Sint16 y, Uint8 r, U
 }
 
 /* ---- Vline */
-
-/*!
-\brief Draw vertical line in currently set color
-
-\param renderer The renderer to draw on.
-\param x X coordinate of points of the line.
-\param y1 Y coordinate of the first point (i.e. top) of the line.
-\param y2 Y coordinate of the second point (i.e. bottom) of the line.
-
-\returns Returns 0 on success, -1 on failure.
-*/
-static int vline(SDL_Renderer *renderer, Sint16 x, Sint16 y1, Sint16 y2)
-{
-	return _gfxDrawLine(renderer, x, y1, x, y2);
-}
 
 /*!
 \brief Draw vertical line with blending.
@@ -1126,25 +1051,6 @@ int boxRGBA(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, 
 }
 
 /* ----- Line */
-
-/*!
-\brief Draw line with alpha blending using the currently set color.
-
-\param renderer The renderer to draw on.
-\param x1 X coordinate of the first point of the line.
-\param y1 Y coordinate of the first point of the line.
-\param x2 X coordinate of the second point of the line.
-\param y2 Y coordinate of the second point of the line.
-
-\returns Returns 0 on success, -1 on failure.
-*/
-static int line(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2)
-{
-	/*
-	* Draw
-	*/
-	return _gfxDrawLine(renderer, x1, y1, x2, y2);
-}
 
 /*!
 \brief Draw line with alpha blending.

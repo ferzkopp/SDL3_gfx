@@ -98,10 +98,11 @@ int main(int argc, char *argv[])
 	if (!realVideo) {
 		SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
 	}
-	if (!SDL_Init(SDL_INIT_VIDEO)) {
+	if (!SDL_Init(SDL_INIT_VIDEO) && !realVideo) {
 		SDL_Log("SDL_Init failed: %s", SDL_GetError());
 		result = 1;
 	} else {
+		/* Without a display the hardware renderer tests skip themselves */
 		result = SDLTest_ExecuteTestSuiteRunner(runner);
 	}
 

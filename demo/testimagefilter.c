@@ -101,7 +101,7 @@ void print_compare(unsigned char *dst1, unsigned char *dst2)
 	}
 }
 
-void print_line()
+void print_line(void)
 {
 	printf("------------------------------------------------------------------------\n\n\n");
 }
@@ -163,7 +163,7 @@ int main(int argc, char *argv[])
 		};
 
 		int k;
-		for (k = 0; k < sizeof(funcs) / sizeof(struct func); k++) {
+		for (k = 0; k < (int)(sizeof(funcs) / sizeof(struct func)); k++) {
 			Uint64 start;
 			int iter;
 
@@ -265,7 +265,7 @@ int main(int argc, char *argv[])
 		};
 
 		int k;
-		for (k = 0; k < sizeof(funcs) / sizeof(struct func); k++) {
+		for (k = 0; k < (int)(sizeof(funcs) / sizeof(struct func)); k++) {
 			Uint64 start;
 			int iter;
 			char call[1024];
@@ -313,7 +313,7 @@ int main(int argc, char *argv[])
 		};
 
 		int k;
-		for (k = 0; k < sizeof(funcs) / sizeof(struct func); k++) {
+		for (k = 0; k < (int)(sizeof(funcs) / sizeof(struct func)); k++) {
 			Uint64 start;
 			int iter;
 			char call[1024];
@@ -394,7 +394,7 @@ int main(int argc, char *argv[])
 		};
 
 		int k;
-		for (k = 0; k < sizeof(funcs) / sizeof(struct func); k++) {
+		for (k = 0; k < (int)(sizeof(funcs) / sizeof(struct func)); k++) {
 			Uint64 start;
 			int iter;
 			char call[1024];
