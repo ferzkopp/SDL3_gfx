@@ -61,6 +61,25 @@ Andreas Schiffler -- aschiffler at ferzkopp dot net
 /*! \brief Maps the bool result of an SDL3 function to the 0 (success) / -1 (error) convention of this API. */
 #define GFX_RESULT(call) ((call) ? 0 : -1)
 
+/*!
+\brief Internal function to convert a coordinate to Sint16, clamped to the Sint16 range.
+
+Converting a floating point value outside the range of the target type is undefined behavior (PRIM-020).
+*/
+static Sint16 _gfxClampSint16(double v)
+{
+	if (!(v == v)) {
+		return 0;
+	}
+	if (v <= -32768.0) {
+		return -32768;
+	}
+	if (v >= 32767.0) {
+		return 32767;
+	}
+	return (Sint16)v;
+}
+
 /* ---- Structures */
 
 /*!
@@ -1241,7 +1260,8 @@ static void _aalineBatch(GFX_Batch *batch, Sint16 x1, Sint16 y1, Sint16 x2, Sint
 		/*
 		* Not-so-portable version: erradj = ((Uint64)dx << 32) / (Uint64)dy; 
 		*/
-		erradj = ((dx << 16) / dy) << 16;
+		/* Unsigned: signed shifts overflow for spans of 32768 pixels or more (PRIM-018) */
+		erradj = (((Uint32)dx << 16) / (Uint32)dy) << 16;
 
 		/*
 		* draw all pixels other than the first and last 
@@ -1279,7 +1299,7 @@ static void _aalineBatch(GFX_Batch *batch, Sint16 x1, Sint16 y1, Sint16 x2, Sint
 		/*
 		* Not-so-portable version: erradj = ((Uint64)dy << 32) / (Uint64)dx; 
 		*/
-		erradj = ((dy << 16) / dx) << 16;
+		erradj = (((Uint32)dy << 16) / (Uint32)dx) << 16;
 
 		/*
 		* draw all pixels other than the first and last 
@@ -1794,11 +1814,12 @@ static void _drawQuadrants(GFX_Batch *batch, Sint16 x, Sint16 y, Sint16 dx, Sint
 static int _ellipseRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rx, Sint16 ry, Uint8 r, Uint8 g, Uint8 b, Uint8 a, Sint32 f)
 {
 	Sint32 rxi, ryi;
-	Sint32 rx2, ry2, rx22, ry22;
-	Sint32 error;
+	/* 64-bit error terms: the products overflow 32 bits for radii above about 1000 (PRIM-019) */
+	Sint64 rx2, ry2, rx22, ry22;
+	Sint64 error;
 	Sint32 curX, curY, curXp1, curYm1;
 	Sint32 scrX, scrY, oldX, oldY;
-	Sint32 deltaX, deltaY;
+	Sint64 deltaX, deltaY;
 	Sint32 ellipseOverscan;
 	GFX_Batch batch;
 
@@ -1854,9 +1875,9 @@ static int _ellipseRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rx, S
 	/* Midpoint ellipse algorithm with overdraw */
 	rxi *= ellipseOverscan;
 	ryi *= ellipseOverscan;
-	rx2 = rxi * rxi;
+	rx2 = (Sint64)rxi * rxi;
 	rx22 = rx2 + rx2;
-	ry2 = ryi * ryi;
+	ry2 = (Sint64)ryi * ryi;
 	ry22 = ry2 + ry2;
 	curX = 0;
 	curY = ryi;
@@ -2044,7 +2065,8 @@ int aaellipseRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rx, Sint16 
 {
 	int i;
 	GFX_Batch batch;
-	int a2, b2, ds, dt, dxt, t, s, d;
+	int dxt;
+	Sint64 a2, b2, ds, dt, t, s, d; /* 64-bit: s = -2 * rx^2 * ry overflows 32 bits (PRIM-019) */
 	Sint16 xp, yp, xs, ys, dyt, od, xx, yy, xc2, yc2;
 	float cp;
 	double sab;
@@ -2073,8 +2095,8 @@ int aaellipseRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rx, Sint16 
 	}
 
 	/* Variable setup */
-	a2 = rx * rx;
-	b2 = ry * ry;
+	a2 = (Sint64)rx * rx;
+	b2 = (Sint64)ry * ry;
 
 	ds = 2 * a2;
 	dt = 2 * b2;
@@ -2128,7 +2150,7 @@ int aaellipseRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rx, Sint16 
 
 		/* Calculate alpha */
 		if (s != 0) {
-			cp = (float)abs(d) / (float)abs(s);
+			cp = (float)(d < 0 ? -d : d) / (float)(s < 0 ? -s : s);
 			if (cp > 1.0) {
 				cp = 1.0;
 			}
@@ -2187,7 +2209,7 @@ int aaellipseRGBA(SDL_Renderer *renderer, Sint16 x, Sint16 y, Sint16 rx, Sint16 
 
 		/* Calculate alpha */
 		if (t != 0) {
-			cp = (float)abs(d) / (float)abs(t);
+			cp = (float)(d < 0 ? -d : d) / (float)(t < 0 ? -t : t);
 			if (cp > 1.0) {
 				cp = 1.0;
 			}
@@ -3939,8 +3961,8 @@ int bezierRGBA(SDL_Renderer *renderer, const Sint16 *vx, const Sint16 *vy, int n
 	npoints = 1;
 	for (i = 0; i <= (n * s); i++) {
 		t += stepsize;
-		x2 = (Sint16)_evaluateBezier(x, n, t);
-		y2 = (Sint16)_evaluateBezier(y, n, t);
+		x2 = _gfxClampSint16(_evaluateBezier(x, n, t));
+		y2 = _gfxClampSint16(_evaluateBezier(y, n, t));
 		if (((float)x2 != points[npoints - 1].x) || ((float)y2 != points[npoints - 1].y)) {
 			points[npoints].x = (float)x2;
 			points[npoints].y = (float)y2;
@@ -4038,14 +4060,14 @@ int thickLineRGBA(SDL_Renderer *renderer, Sint16 x1, Sint16 y1, Sint16 x2, Sint1
 	dy1 = (double)y1;
 	dx2 = (double)x2;
 	dy2 = (double)y2;
-	px[0] = (Sint16)(dx1 + ny);
-	px[1] = (Sint16)(dx1 - ny);
-	px[2] = (Sint16)(dx2 - ny);
-	px[3] = (Sint16)(dx2 + ny);
-	py[0] = (Sint16)(dy1 - nx);
-	py[1] = (Sint16)(dy1 + nx);
-	py[2] = (Sint16)(dy2 + nx);
-	py[3] = (Sint16)(dy2 - nx);
+	px[0] = _gfxClampSint16(dx1 + ny);
+	px[1] = _gfxClampSint16(dx1 - ny);
+	px[2] = _gfxClampSint16(dx2 - ny);
+	px[3] = _gfxClampSint16(dx2 + ny);
+	py[0] = _gfxClampSint16(dy1 - nx);
+	py[1] = _gfxClampSint16(dy1 + nx);
+	py[2] = _gfxClampSint16(dy2 + nx);
+	py[3] = _gfxClampSint16(dy2 - nx);
 
 	/* Draw polygon */
 	return filledPolygonRGBA(renderer, px, py, 4, r, g, b, a);

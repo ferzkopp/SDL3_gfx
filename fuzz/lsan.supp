@@ -1,0 +1,6 @@
+# LeakSanitizer suppressions for the linux-fuzz preset (LSAN_OPTIONS=suppressions=...).
+# Allocations kept until process exit by SDL3 and system libraries, not by SDL3_gfx:
+# the D-Bus connection and its caches (also from graphics drivers) and EGL/GL driver state.
+leak:SDL_DBus_Init
+leak:libdbus-1.so
+leak:SDL_EGL_

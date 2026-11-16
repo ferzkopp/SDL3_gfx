@@ -177,6 +177,11 @@ static int _shrinkSurfaceRGBA(SDL_Surface *src, SDL_Surface *dst, int factorx, i
 	/* Precalculate division factor */
 	n_average = factorx * factory;
 
+	/* Empty destination (factor larger than the source): nothing to do, dst->pixels may be NULL (ROTO-009) */
+	if ((dst->w == 0) || (dst->h == 0)) {
+		return (0);
+	}
+
 	/*
 	* Scan destination
 	*/
@@ -264,6 +269,11 @@ static int _shrinkSurfaceY(SDL_Surface *src, SDL_Surface *dst, int factorx, int 
 
 	/* Precalculate division factor */
 	n_average = factorx * factory;
+
+	/* Empty destination (factor larger than the source): nothing to do, dst->pixels may be NULL (ROTO-009) */
+	if ((dst->w == 0) || (dst->h == 0)) {
+		return (0);
+	}
 
 	/*
 	* Scan destination
@@ -358,16 +368,17 @@ static int _zoomSurfaceRGBA(SDL_Surface *src, SDL_Surface *dst, int flipx, int f
 	spixelw = (src->w - 1);
 	spixelh = (src->h - 1);
 	if (smooth) {
-		sx = (int)(65536.0 * (float)spixelw / (float)(dst->w - 1));
-		sy = (int)(65536.0 * (float)spixelh / (float)(dst->h - 1));
+		/* A destination of one column/row has no step (was a division by zero, ROTO-007) */
+		sx = (dst->w > 1) ? (int)(65536.0 * (float)spixelw / (float)(dst->w - 1)) : 0;
+		sy = (dst->h > 1) ? (int)(65536.0 * (float)spixelh / (float)(dst->h - 1)) : 0;
 	} else {
 		sx = (int)(65536.0 * (float)(src->w) / (float)(dst->w));
 		sy = (int)(65536.0 * (float)(src->h) / (float)(dst->h));
 	}
 
 	/* Maximum scaled source size */
-	ssx = (src->w << 16) - 1;
-	ssy = (src->h << 16) - 1;
+	ssx = src->w * 65536 - 1;
+	ssy = src->h * 65536 - 1;
 
 	/* Precalculate horizontal row increments */
 	csx = 0;
@@ -690,7 +701,9 @@ Assumes dst surface was allocated with the correct dimensions.
 */
 static void _transformSurfaceRGBA(SDL_Surface *src, SDL_Surface *dst, int cx, int cy, int ixcos, int ixsin, int iysin, int iycos, int flipx, int flipy, int smooth)
 {
-	int x, y, t1, t2, dx, dy, xd, yd, sdx, sdy, ax, ay, ex, ey, sw, sh;
+	int x, y, t1, t2, ex, ey, sw, sh;
+	/* 64-bit 16.16 positions: 32 bits overflow for small zoom factors or large surfaces (ROTO-008) */
+	Sint64 dx, dy, xd, yd, sdx, sdy, ax, ay;
 	tColorRGBA c00, c01, c10, c11, cswap;
 	tColorRGBA *pc, *sp;
 	int gap;
@@ -698,10 +711,11 @@ static void _transformSurfaceRGBA(SDL_Surface *src, SDL_Surface *dst, int cx, in
 	/*
 	* Variable setup 
 	*/
-	xd = ((src->w - dst->w) << 15);
-	yd = ((src->h - dst->h) << 15);
-	ax = (cx << 16) - (ixcos * cx);
-	ay = (cy << 16) - (iysin * cx);
+	/* 16.16 fixed point; multiplications instead of shifts of possibly negative values (ROTO-006) */
+	xd = (Sint64)(src->w - dst->w) * 32768;
+	yd = (Sint64)(src->h - dst->h) * 32768;
+	ax = (Sint64)cx * 65536 - (Sint64)ixcos * cx;
+	ay = (Sint64)cy * 65536 - (Sint64)iysin * cx;
 	sw = src->w - 1;
 	sh = src->h - 1;
 	pc = (tColorRGBA *)dst->pixels;
@@ -751,8 +765,8 @@ static void _transformSurfaceRGBA(SDL_Surface *src, SDL_Surface *dst, int cx, in
 					/*
 					* Interpolate colors 
 					*/
-					ex = (sdx & 0xffff);
-					ey = (sdy & 0xffff);
+					ex = (int)(sdx & 0xffff);
+					ey = (int)(sdy & 0xffff);
 					t1 = ((((c01.r - c00.r) * ex) >> 16) + c00.r) & 0xff;
 					t2 = ((((c11.r - c10.r) * ex) >> 16) + c10.r) & 0xff;
 					pc->r = (Uint8)((((t2 - t1) * ey) >> 16) + t1);
@@ -778,8 +792,8 @@ static void _transformSurfaceRGBA(SDL_Surface *src, SDL_Surface *dst, int cx, in
 			sdx = (ax + (ixsin * dy)) + xd;
 			sdy = (ay - (iycos * dy)) + yd;
 			for (x = 0; x < dst->w; x++) {
-				dx = (short)(sdx >> 16);
-				dy = (short)(sdy >> 16);
+				dx = sdx >> 16;
+				dy = sdy >> 16;
 				if (flipx) dx = (src->w - 1) - dx;
 				if (flipy) dy = (src->h - 1) - dy;
 				if ((dx >= 0) && (dy >= 0) && (dx < src->w) && (dy < src->h)) {
@@ -818,17 +832,20 @@ Assumes dst surface was allocated with the correct dimensions.
 */
 static void transformSurfaceY(SDL_Surface *src, SDL_Surface *dst, int cx, int cy, int ixcos, int ixsin, int iysin, int iycos, int flipx, int flipy)
 {
-	int x, y, dx, dy, xd, yd, sdx, sdy, ax, ay;
+	int x, y;
+	/* 64-bit 16.16 positions: 32 bits overflow for small zoom factors or large surfaces (ROTO-008) */
+	Sint64 dx, dy, xd, yd, sdx, sdy, ax, ay;
 	tColorY *pc, *sp;
 	int gap;
 
 	/*
 	* Variable setup 
 	*/
-	xd = ((src->w - dst->w) << 15);
-	yd = ((src->h - dst->h) << 15);
-	ax = (cx << 16) - (ixcos * cx);
-	ay = (cy << 16) - (iysin * cx);
+	/* 16.16 fixed point; multiplications instead of shifts of possibly negative values (ROTO-006) */
+	xd = (Sint64)(src->w - dst->w) * 32768;
+	yd = (Sint64)(src->h - dst->h) * 32768;
+	ax = (Sint64)cx * 65536 - (Sint64)ixcos * cx;
+	ay = (Sint64)cy * 65536 - (Sint64)iysin * cx;
 	pc = (tColorY *)dst->pixels;
 	gap = dst->pitch - dst->w;
 	/*
@@ -843,8 +860,8 @@ static void transformSurfaceY(SDL_Surface *src, SDL_Surface *dst, int cx, int cy
 		sdx = (ax + (ixsin * dy)) + xd;
 		sdy = (ay - (iycos * dy)) + yd;
 		for (x = 0; x < dst->w; x++) {
-			dx = (short)(sdx >> 16);
-			dy = (short)(sdy >> 16);
+			dx = sdx >> 16;
+			dy = sdy >> 16;
 			if (flipx) dx = (src->w - 1) - dx;
 			if (flipy) dy = (src->h - 1) - dy;
 			if ((dx >= 0) && (dy >= 0) && (dx < src->w) && (dy < src->h)) {

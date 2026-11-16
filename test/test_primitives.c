@@ -822,6 +822,85 @@ static int api_degenerate_lines_blended(void *arg)
 	GfxTest_DestroyCanvas(&c);
 	return TEST_COMPLETED;
 }
+/* Anti-aliased lines spanning 32768 pixels or more follow their slope (PRIM-018: the 16.16 error step was computed
+   with signed shifts that overflowed). The line passes through the origin with slope 2/3. */
+static int api_aaline_long(void *arg)
+{
+	GfxTestCanvas c;
+	int x, y, errors = 0;
+	(void)arg;
+	if (GfxTest_CreateCanvas(&c, 64, 64)) {
+		return TEST_ABORTED;
+	}
+	aalineRGBA(c.renderer, -30000, -20000, 30000, 20000, WHITE, 255);
+	for (x = 3; x < 60; x += 3) {
+		int best = -1, bestv = 0;
+		for (y = 0; y < 64; y++) {
+			int v = (int)(GfxTest_GetPixel(&c, x, y) & 0xFF);
+			if (v > bestv) {
+				bestv = v;
+				best = y;
+			}
+		}
+		errors += (best < 0) || (SDL_abs(best - x * 2 / 3) > 1);
+	}
+	SDLTest_AssertCheck(errors == 0, "Long anti-aliased line has slope 2/3 (%d columns off the line)", errors);
+	GfxTest_DestroyCanvas(&c);
+	return TEST_COMPLETED;
+}
+
+/* Largest deviation (in pixels) of the drawn edge of an ellipse with center (cx, cy) and radii (rx, ry) from the exact
+   curve. horizontal: the right edge (brightest pixel of each row), else the bottom edge (brightest pixel of each column). */
+static int ellipse_edge_error(GfxTestCanvas *c, int cx, int cy, int rx, int ry, int horizontal)
+{
+	int i, j, worst = 0;
+	for (i = 0; i < 64; i++) {
+		int best = -1;
+		Uint32 bestv = 0;
+		double d, expected;
+		for (j = 0; j < 64; j++) {
+			Uint32 v = GfxTest_GetPixel(c, horizontal ? j : i, horizontal ? i : j) & 0xFF;
+			if (v >= bestv && v > 0) {
+				bestv = v;
+				best = j;
+			}
+		}
+		d = horizontal ? (double)(i - cy) / ry : (double)(i - cx) / rx;
+		expected = horizontal ? cx + rx * SDL_sqrt(1.0 - d * d) : cy + ry * SDL_sqrt(1.0 - d * d);
+		worst = SDL_max(worst, best < 0 ? 64 : (int)SDL_fabs(best - expected));
+	}
+	return worst;
+}
+
+/* Ellipses with large radii keep their shape (PRIM-019: the 32-bit error terms of the midpoint algorithms overflowed). */
+static int api_ellipse_large(void *arg)
+{
+	GfxTestCanvas c;
+	int k, err;
+	(void)arg;
+	if (GfxTest_CreateCanvas(&c, 64, 64)) {
+		return TEST_ABORTED;
+	}
+	for (k = 0; k < 6; k++) {
+		const int horizontal = k & 1;
+		/* The visible edge passes through the canvas center: right end (horizontal) or bottom end of the ellipse */
+		const int rx = 3000, ry = 1800, cx = horizontal ? 32 - rx : 32, cy = horizontal ? 32 : 32 - ry;
+		GfxTest_ClearCanvas(&c, 0, 0, 0);
+		if (k < 2) {
+			ellipseRGBA(c.renderer, (Sint16)cx, (Sint16)cy, (Sint16)rx, (Sint16)ry, WHITE, 255);
+		} else if (k < 4) {
+			aaellipseRGBA(c.renderer, (Sint16)cx, (Sint16)cy, (Sint16)rx, (Sint16)ry, WHITE, 255);
+		} else {
+			filledEllipseRGBA(c.renderer, (Sint16)cx, (Sint16)cy, (Sint16)rx, (Sint16)ry, WHITE, 255);
+		}
+		err = ellipse_edge_error(&c, cx, cy, rx, ry, horizontal);
+		SDLTest_AssertCheck(err <= 1, "%s, %s edge: largest deviation %d pixels", k < 2 ? "ellipse" : (k < 4 ? "aaellipse" : "filledEllipse"),
+			horizontal ? "right" : "bottom", err);
+	}
+	GfxTest_DestroyCanvas(&c);
+	return TEST_COMPLETED;
+}
+
 /* A zero-length thick line of width w is a w x w square centered on the point (PRIM-010). */
 static int api_thick_point(void *arg)
 {
@@ -1034,6 +1113,8 @@ static const SDLTest_TestCaseReference api_poly_large_ref = {api_polygon_large_c
 static const SDLTest_TestCaseReference api_poly_clip_ref = {api_polygon_viewport_clip, "api_polygon_viewport_clip", "Polygon fill row clipping (PERF-001)", TEST_ENABLED};
 static const SDLTest_TestCaseReference api_poly_threads_ref = {api_polygon_threads, "api_polygon_threads", "Polygon fill from several threads (PRIM-002)", TEST_ENABLED};
 static const SDLTest_TestCaseReference api_degenerate_ref = {api_degenerate_lines_blended, "api_degenerate_lines_blended", "Blended one-pixel lines (PRIM-015)", TEST_ENABLED};
+static const SDLTest_TestCaseReference api_aaline_long_ref = {api_aaline_long, "api_aaline_long", "Anti-aliased line longer than 32767 pixels (PRIM-018)", TEST_ENABLED};
+static const SDLTest_TestCaseReference api_ellipse_large_ref = {api_ellipse_large, "api_ellipse_large", "Ellipses with large radii (PRIM-019)", TEST_ENABLED};
 static const SDLTest_TestCaseReference api_thick_point_ref = {api_thick_point, "api_thick_point", "Zero-length thick line is a centered square (PRIM-010)", TEST_ENABLED};
 static const SDLTest_TestCaseReference api_blend_once_ref = {api_blend_once, "api_blend_once", "Semi-transparent primitives blend each pixel once", TEST_ENABLED};
 static const SDLTest_TestCaseReference api_font_large_ref = {api_font_too_large, "api_font_too_large", "Oversized custom font", TEST_ENABLED};
@@ -1047,6 +1128,6 @@ static const SDLTest_TestCaseReference *primitivesTests[] = {
 	&golden_aacircle_ref, &golden_filled_circle_ref, &golden_arc_ref, &golden_ellipse_ref, &golden_aaellipse_ref,
 	&golden_filled_ellipse_ref, &golden_pie_ref, &golden_filled_pie_ref, &golden_trigon_ref, &golden_polygon_ref,
 	&golden_aapolygon_ref, &golden_filled_polygon_ref, &golden_textured_polygon_ref, &golden_bezier_ref, &golden_text_ref,
-	&golden_blend_overlap_ref, &api_color_ref, &api_invalid_ref, &api_rbox_ref, &api_arc_ref, &api_poly_large_ref, &api_poly_clip_ref, &api_poly_threads_ref, &api_degenerate_ref, &api_thick_point_ref, &api_blend_once_ref, &api_font_large_ref, &api_null_ref, &api_text_ref, &api_text2_ref, NULL};
+	&golden_blend_overlap_ref, &api_color_ref, &api_invalid_ref, &api_rbox_ref, &api_arc_ref, &api_poly_large_ref, &api_poly_clip_ref, &api_poly_threads_ref, &api_degenerate_ref, &api_thick_point_ref, &api_aaline_long_ref, &api_ellipse_large_ref, &api_blend_once_ref, &api_font_large_ref, &api_null_ref, &api_text_ref, &api_text2_ref, NULL};
 
 SDLTest_TestSuiteReference primitivesTestSuite = {"Primitives", NULL, primitivesTests, NULL};
