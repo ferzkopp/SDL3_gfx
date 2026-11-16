@@ -84,6 +84,22 @@ back to the system SDL3 when `<root>/install/sdl3` does not exist.
 
 Available presets: `linux-debug`, `linux-release`, `linux-fuzz` (clang libFuzzer + ASan/UBSan).
 
+Verified on Linux Mint 22.3 (Ubuntu 24.04 base) with GCC 13 and clang 18; the golden images are identical on
+Windows and Linux.
+
+- `PrimitivesGPU` needs a display (tested with NVIDIA: OpenGL, OpenGL ES 2, Vulkan and the `gpu` renderer). From an SSH session, use the desktop
+  session of the same user: `DISPLAY=:0 XAUTHORITY=~/.Xauthority ctest --preset linux-debug`. Without a display the
+  suite is skipped.
+- `linux-fuzz` instruments everything with AddressSanitizer and UndefinedBehaviorSanitizer; undefined behavior aborts
+  the test. The test preset sets `LSAN_OPTIONS=suppressions=<repo>/fuzz/lsan.supp` for memory that SDL and system
+  libraries (D-Bus, graphics drivers) keep until exit; set it also when running the fuzzers directly:
+
+  ```bash
+  export LSAN_OPTIONS=suppressions=$PWD/fuzz/lsan.supp
+  mkdir -p build/linux-fuzz/work
+  build/linux-fuzz/bin/fuzz_primitives build/linux-fuzz/work fuzz/corpus/primitives -max_total_time=600
+  ```
+
 ## VS Code
 
 Open the repository folder (or the multi-root `.code-workspace` of the modernization workspace).

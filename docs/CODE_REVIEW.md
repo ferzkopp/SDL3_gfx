@@ -7,7 +7,7 @@ SDL3_gfx 2.0 is the SDL3 version of SDL2_gfx 1.1: the drawing, rotozoom, framera
 and draws the same pixels (the golden images are identical). The findings of that code, with their IDs, tests and
 fixes, are documented in the code review of [SDL2_gfx](https://github.com/ferzkopp/SDL2_gfx/blob/main/docs/CODE_REVIEW.md)
 (API-001, BLD-001, FONT-001/002, FRM-001/002, IMGF-001 to IMGF-006, PERF-001/002, PRIM-001 to PRIM-016,
-ROTO-001 to ROTO-005, SA-001 to SA-004, TOOL-001); all of them are fixed here as well. This document covers the
+PRIM-018 to PRIM-020, ROTO-001 to ROTO-009, SA-001 to SA-005, TOOL-001); all of them are fixed here as well. This document covers the
 SDL3 port.
 
 ## Provenance
@@ -30,6 +30,7 @@ SDL3 port.
 | libFuzzer + ASan (`fuzz/`), 2 min per target | clean: primitives 136k, rotozoom 502k, imagefilter 2.2M, font 23k executions |
 | Manual review of the first SDL3 port | REF-001 to REF-003 |
 | Benchmark against SDL2_gfx (`bench/gfxbench`) | PERF-003 |
+| Linux (Mint 22.3): GCC 13 `-Werror`, clang 18 ASan + UBSan (`linux-fuzz`), libFuzzer with UBSan 5 min per target, NVIDIA OpenGL/GLES2/Vulkan/`gpu` `PrimitivesGPU` | the UBSan findings of the shared code (PRIM-018 to PRIM-020, ROTO-006 to ROTO-009, see SDL2_gfx) and SA-005; afterwards clean: primitives 117k, rotozoom 2.6M, imagefilter 3.6M, font 0.2M executions; golden and parity tests identical to Windows |
 
 ## Findings
 

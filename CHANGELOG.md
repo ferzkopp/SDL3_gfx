@@ -26,6 +26,12 @@ SDL3 version of SDL2_gfx 1.1 and replaces the 1.0.x API; see [docs/MIGRATION.md]
   zero-length thick lines (PRIM-010), each pixel blended once (PRIM-016), NULL framerate manager (FRM-001),
   long-running framerate schedule (FRM-002), portable C image filters (IMGF-001 to IMGF-006).
 - `rotateSurface90Degrees` keeps the palette of 8-bit surfaces (ROTO-005).
+- Large shapes: ellipses and anti-aliased ellipses with radii above about 1000 have the correct shape (32-bit
+  overflow, PRIM-019); anti-aliased lines spanning 32768 pixels or more have the correct slope (PRIM-018); thick
+  lines and bezier curves beyond the coordinate range are clamped instead of wrapping around (PRIM-020).
+- Rotozoomer: 64-bit source positions, correct for small zoom factors and sources wider than 32767 pixels
+  (ROTO-008); no division by zero for a smooth zoom to one pixel (ROTO-007); `shrinkSurface` with a factor larger
+  than the source returns its empty surface without touching NULL pixels (ROTO-009); no undefined shifts (ROTO-006).
 - Performance: draw call batching (PERF-002) and visible-rows-only polygon fills (PERF-001); see
   [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 - Only the functions declared in the headers are exported. SONAME `libSDL3_gfx.so.2` (1.0.x: `.so.1`).
