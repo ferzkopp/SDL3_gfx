@@ -165,6 +165,30 @@ static int test_rotate90(void *arg)
 	return TEST_COMPLETED;
 }
 
+/* 8-bit surfaces keep their palette when rotated by 90 degrees (ROTO-005). */
+static int test_rotate90_palette(void *arg)
+{
+	SDL_Surface *src, *dst;
+	SDL_Palette *sp, *dp;
+	int turns;
+	(void)arg;
+	src = GfxTest_LoadData("sample8.bmp");
+	if (src == NULL) {
+		return TEST_ABORTED;
+	}
+	sp = SDL_GetSurfacePalette(src);
+	for (turns = 0; turns < 4; turns++) {
+		dst = rotateSurface90Degrees(src, turns);
+		dp = dst ? SDL_GetSurfacePalette(dst) : NULL;
+		SDLTest_AssertCheck(sp && dp && dp->ncolors == sp->ncolors &&
+				SDL_memcmp(dp->colors, sp->colors, (size_t)sp->ncolors * sizeof(SDL_Color)) == 0,
+			"%d turns: palette is copied", turns);
+		SDL_DestroySurface(dst);
+	}
+	SDL_DestroySurface(src);
+	return TEST_COMPLETED;
+}
+
 static int test_shrink(void *arg)
 {
 	SDL_Surface *src, *dst;
@@ -206,8 +230,8 @@ static int test_formats(void *arg)
 	dst = zoomSurface(src8, 0.5, 0.5, SMOOTHING_OFF);
 	SDLTest_AssertCheck(dst && SDL_BITSPERPIXEL(dst->format) == 8 && SDL_GetSurfacePalette(dst), "8-bit source stays 8-bit with palette");
 	SDLTest_AssertCheck(dst && SDL_GetSurfacePalette(dst) && SDL_GetSurfacePalette(src8) &&
-		SDL_GetSurfacePalette(dst)->ncolors == SDL_GetSurfacePalette(src8)->ncolors &&
-		SDL_memcmp(SDL_GetSurfacePalette(dst)->colors, SDL_GetSurfacePalette(src8)->colors, SDL_GetSurfacePalette(src8)->ncolors * sizeof(SDL_Color)) == 0,
+			SDL_GetSurfacePalette(dst)->ncolors == SDL_GetSurfacePalette(src8)->ncolors &&
+			SDL_memcmp(SDL_GetSurfacePalette(dst)->colors, SDL_GetSurfacePalette(src8)->colors, SDL_GetSurfacePalette(src8)->ncolors * sizeof(SDL_Color)) == 0,
 		"Palette is copied");
 	SDL_DestroySurface(dst);
 	dst = rotozoomSurface(src8, 30.0, 1.0, SMOOTHING_ON);
@@ -353,6 +377,7 @@ static const SDLTest_TestCaseReference sizeRef = {test_size_functions, "rotozoom
 static const SDLTest_TestCaseReference sizeXYRef = {test_size_xy, "rotozoom_size_xy", "rotozoomSurfaceSizeXY (ROTO-001)", TEST_ENABLED};
 static const SDLTest_TestCaseReference zoomRef = {test_zoom_identity_and_flip, "rotozoom_zoom_identity_flip", "Zoom identity, flips, 2x", TEST_ENABLED};
 static const SDLTest_TestCaseReference rot90Ref = {test_rotate90, "rotozoom_rotate90", "rotateSurface90Degrees", TEST_ENABLED};
+static const SDLTest_TestCaseReference rot90PalRef = {test_rotate90_palette, "rotozoom_rotate90_palette", "rotateSurface90Degrees keeps the palette (ROTO-005)", TEST_ENABLED};
 static const SDLTest_TestCaseReference shrinkRef = {test_shrink, "rotozoom_shrink", "shrinkSurface", TEST_ENABLED};
 static const SDLTest_TestCaseReference formatsRef = {test_formats, "rotozoom_formats", "8/24/32-bit handling", TEST_ENABLED};
 static const SDLTest_TestCaseReference zoom8Ref = {test_zoom_8bit_flip, "rotozoom_zoom_8bit_flip", "8-bit zoom with flips (ROTO-002)", TEST_ENABLED};
@@ -361,6 +386,6 @@ static const SDLTest_TestCaseReference goldenRef = {test_golden_rotozoom, "golde
 
 static const SDLTest_TestCaseReference invalidRef = {test_invalid_factors, "rotozoom_invalid_factors", "NaN, infinite and huge factors (ROTO-004)", TEST_ENABLED};
 
-static const SDLTest_TestCaseReference *rotozoomTests[] = {&sizeRef, &sizeXYRef, &zoomRef, &rot90Ref, &shrinkRef, &formatsRef, &zoom8Ref, &goldenRef, &goldenXYRef, &invalidRef, NULL};
+static const SDLTest_TestCaseReference *rotozoomTests[] = {&sizeRef, &sizeXYRef, &zoomRef, &rot90Ref, &rot90PalRef, &shrinkRef, &formatsRef, &zoom8Ref, &goldenRef, &goldenXYRef, &invalidRef, NULL};
 
 SDLTest_TestSuiteReference rotozoomTestSuite = {"Rotozoom", NULL, rotozoomTests, NULL};
