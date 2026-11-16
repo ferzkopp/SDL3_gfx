@@ -4,7 +4,7 @@ All notable changes to SDL3_gfx. Versions 1.0.x are the first SDL3 port by Sulai
 (<https://github.com/sabdul-khabir/SDL3_gfx>, tag `v1.0.1` in this repository). Version 2.0 is the
 SDL3 version of SDL2_gfx 1.1 and replaces the 1.0.x API; see [docs/MIGRATION.md](docs/MIGRATION.md).
 
-## 2.0.0 (unreleased)
+## 2.0.0 - 2026-11-15
 
 - **API:** the SDL2_gfx API (decision D8 of the modernization): `Sint16` coordinates and radii instead of
   `float`, `int` results (0 = success, -1 = error) instead of `bool`, `SDL_imageFilterMultNor` restored,

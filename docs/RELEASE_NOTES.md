@@ -24,7 +24,8 @@ See [MIGRATION.md](https://github.com/ferzkopp/SDL3_gfx/blob/v2.0.0/docs/MIGRATI
 - Draw call batching: fast with hardware renderers, including SDL3's GPU renderer.
 - CMake package `SDL3_gfx` (`SDL3_gfx::SDL3_gfx`, `-shared`, `-static`), pkg-config `sdl3-gfx`, headers in
   `include/SDL3_gfx`; Emscripten builds the static library.
-- Tests: golden images, hardware renderer comparisons, fuzzing, and parity tests against SDL2_gfx.
+- Tests: golden images, hardware renderer comparisons, fuzzing, and parity tests against SDL2_gfx, on Windows
+  (MSVC; Direct3D, OpenGL, `gpu`) and Linux (GCC, clang with sanitizers; OpenGL, Vulkan, `gpu`).
 
 ## Known differences from SDL2
 
