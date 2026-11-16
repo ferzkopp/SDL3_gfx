@@ -1,0 +1,69 @@
+renderer,group,item,value,unit,count
+software,primitive,"pixel",8679843.994,ops/s,4339968
+software,primitive,"pixel (blend)",8557025.195,ops/s,4278528
+software,primitive,"hline",6493077.514,ops/s,3246592
+software,primitive,"hline (blend)",1216447.285,ops/s,608256
+software,primitive,"vline",3152361.303,ops/s,1576192
+software,primitive,"vline (blend)",1635721.901,ops/s,817920
+software,primitive,"rectangle",1606527.799,ops/s,803328
+software,primitive,"rectangle (blend)",376580.821,ops/s,188416
+software,primitive,"roundedRectangle",855864.755,ops/s,428032
+software,primitive,"roundedRectangle (blend)",281836.758,ops/s,141056
+software,primitive,"box",29886.268,ops/s,15104
+software,primitive,"box (blend)",9945.911,ops/s,5120
+software,primitive,"roundedBox",30800.163,ops/s,15616
+software,primitive,"roundedBox (blend)",9621.028,ops/s,4864
+software,primitive,"line",2087021.622,ops/s,1043712
+software,primitive,"line (blend)",638715.021,ops/s,319488
+software,primitive,"aaline",14410.718,ops/s,7216
+software,primitive,"aaline (blend)",14535.828,ops/s,7360
+software,primitive,"thickLine(5)",51004.805,ops/s,25568
+software,primitive,"thickLine(5) (blend)",45148.746,ops/s,22608
+software,primitive,"circle",451880.877,ops/s,225984
+software,primitive,"circle (blend)",270204.302,ops/s,135168
+software,primitive,"aacircle",16110.289,ops/s,8096
+software,primitive,"aacircle (blend)",16479.298,ops/s,8256
+software,primitive,"filledCircle",82542.908,ops/s,41472
+software,primitive,"filledCircle (blend)",25730.291,ops/s,13056
+software,primitive,"arc",892174.337,ops/s,446144
+software,primitive,"arc (blend)",541227.460,ops/s,270656
+software,primitive,"ellipse",411351.438,ops/s,205712
+software,primitive,"ellipse (blend)",249143.987,ops/s,124672
+software,primitive,"aaellipse",13782.669,ops/s,6912
+software,primitive,"aaellipse (blend)",15807.896,ops/s,7936
+software,primitive,"filledEllipse",103378.017,ops/s,51712
+software,primitive,"filledEllipse (blend)",32321.243,ops/s,16384
+software,primitive,"pie",444867.943,ops/s,222464
+software,primitive,"pie (blend)",332344.223,ops/s,166400
+software,primitive,"filledPie",56120.267,ops/s,28096
+software,primitive,"filledPie (blend)",30773.436,ops/s,15424
+software,primitive,"trigon",785182.025,ops/s,392704
+software,primitive,"trigon (blend)",234493.983,ops/s,117248
+software,primitive,"aatrigon",3582.990,ops/s,1808
+software,primitive,"aatrigon (blend)",3813.927,ops/s,1984
+software,primitive,"filledTrigon",33308.107,ops/s,16672
+software,primitive,"filledTrigon (blend)",9548.511,ops/s,4864
+software,primitive,"polygon(8)",910140.502,ops/s,455168
+software,primitive,"polygon(8) (blend)",317672.131,ops/s,158976
+software,primitive,"aapolygon(8)",5219.859,ops/s,2640
+software,primitive,"aapolygon(8) (blend)",5400.073,ops/s,2784
+software,primitive,"filledPolygon(8)",42983.379,ops/s,21504
+software,primitive,"filledPolygon(8) (blend)",27122.439,ops/s,13568
+software,primitive,"texturedPolygon(8)",13506.197,ops/s,6768
+software,primitive,"bezier(4,32)",89205.502,ops/s,44624
+software,primitive,"bezier(4,32) (blend)",83804.638,ops/s,41936
+software,primitive,"string(19)",81391.848,ops/s,40960
+software,primitive,"string(19) (blend)",72527.251,ops/s,36352
+software,rotozoom,"rotozoom 30deg x1",5473.748,ops/s(256^2),2737
+software,rotozoom,"rotozoom 30deg x1 smooth",1160.245,ops/s(256^2),581
+software,rotozoom,"zoom x2",2545.019,ops/s(256^2),1273
+software,rotozoom,"zoom x2 smooth",433.031,ops/s(256^2),217
+software,rotozoom,"zoom x0.5 smooth",7836.713,ops/s(256^2),3919
+software,imagefilter,"Add",833.713,MB/s,417
+software,imagefilter,"Mean",2032.830,MB/s,1017
+software,imagefilter,"AbsDiff",20457.288,MB/s,10229
+software,imagefilter,"Mult",833.614,MB/s,417
+software,imagefilter,"AddByte",819.516,MB/s,410
+software,imagefilter,"ShiftRight",2163.722,MB/s,1082
+software,imagefilter,"BinarizeUsingThreshold",48192.660,MB/s,24097
+software,imagefilter,"NormalizeLinear",586.152,MB/s,294

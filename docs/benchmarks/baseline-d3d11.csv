@@ -1,0 +1,69 @@
+renderer,group,item,value,unit,count
+direct3d11,primitive,"pixel",3372547.420,ops/s,1686528
+direct3d11,primitive,"pixel (blend)",3660920.198,ops/s,1830608
+direct3d11,primitive,"hline",2516766.498,ops/s,1258496
+direct3d11,primitive,"hline (blend)",2180934.184,ops/s,1090560
+direct3d11,primitive,"vline",2443158.923,ops/s,1221696
+direct3d11,primitive,"vline (blend)",2016835.489,ops/s,1008640
+direct3d11,primitive,"rectangle",965706.263,ops/s,482992
+direct3d11,primitive,"rectangle (blend)",1005695.623,ops/s,503040
+direct3d11,primitive,"roundedRectangle",607508.894,ops/s,303872
+direct3d11,primitive,"roundedRectangle (blend)",545665.406,ops/s,272896
+direct3d11,primitive,"box",691838.646,ops/s,346112
+direct3d11,primitive,"box (blend)",913594.943,ops/s,456960
+direct3d11,primitive,"roundedBox",445317.983,ops/s,222720
+direct3d11,primitive,"roundedBox (blend)",448833.066,ops/s,224512
+direct3d11,primitive,"line",383899.725,ops/s,192000
+direct3d11,primitive,"line (blend)",383610.608,ops/s,191936
+direct3d11,primitive,"aaline",22900.081,ops/s,11520
+direct3d11,primitive,"aaline (blend)",30668.961,ops/s,15360
+direct3d11,primitive,"thickLine(5)",74056.872,ops/s,37120
+direct3d11,primitive,"thickLine(5) (blend)",70235.395,ops/s,35168
+direct3d11,primitive,"circle",259334.054,ops/s,129792
+direct3d11,primitive,"circle (blend)",266999.297,ops/s,133632
+direct3d11,primitive,"aacircle",20920.281,ops/s,10496
+direct3d11,primitive,"aacircle (blend)",20552.930,ops/s,10304
+direct3d11,primitive,"filledCircle",104722.973,ops/s,52464
+direct3d11,primitive,"filledCircle (blend)",121863.844,ops/s,60976
+direct3d11,primitive,"arc",367614.449,ops/s,183936
+direct3d11,primitive,"arc (blend)",406797.955,ops/s,203520
+direct3d11,primitive,"ellipse",209644.100,ops/s,104944
+direct3d11,primitive,"ellipse (blend)",210398.754,ops/s,105248
+direct3d11,primitive,"aaellipse",18805.692,ops/s,9472
+direct3d11,primitive,"aaellipse (blend)",22838.659,ops/s,11520
+direct3d11,primitive,"filledEllipse",108019.841,ops/s,54032
+direct3d11,primitive,"filledEllipse (blend)",127705.925,ops/s,63968
+direct3d11,primitive,"pie",142890.801,ops/s,71504
+direct3d11,primitive,"pie (blend)",139022.934,ops/s,69632
+direct3d11,primitive,"filledPie",44146.020,ops/s,22112
+direct3d11,primitive,"filledPie (blend)",40529.242,ops/s,20320
+direct3d11,primitive,"trigon",84583.306,ops/s,42336
+direct3d11,primitive,"trigon (blend)",131896.072,ops/s,66048
+direct3d11,primitive,"aatrigon",7181.343,ops/s,3600
+direct3d11,primitive,"aatrigon (blend)",7431.295,ops/s,3808
+direct3d11,primitive,"filledTrigon",37432.656,ops/s,18768
+direct3d11,primitive,"filledTrigon (blend)",33849.774,ops/s,16976
+direct3d11,primitive,"polygon(8)",128486.894,ops/s,64256
+direct3d11,primitive,"polygon(8) (blend)",154758.614,ops/s,77536
+direct3d11,primitive,"aapolygon(8)",11499.002,ops/s,5872
+direct3d11,primitive,"aapolygon(8) (blend)",11675.268,ops/s,5888
+direct3d11,primitive,"filledPolygon(8)",35840.249,ops/s,17968
+direct3d11,primitive,"filledPolygon(8) (blend)",34305.892,ops/s,17200
+direct3d11,primitive,"texturedPolygon(8)",2968.206,ops/s,1488
+direct3d11,primitive,"bezier(4,32)",42706.335,ops/s,21424
+direct3d11,primitive,"bezier(4,32) (blend)",43176.858,ops/s,21648
+direct3d11,primitive,"string(19)",107476.616,ops/s,53776
+direct3d11,primitive,"string(19) (blend)",125279.767,ops/s,62720
+direct3d11,rotozoom,"rotozoom 30deg x1",5346.373,ops/s(256^2),2674
+direct3d11,rotozoom,"rotozoom 30deg x1 smooth",1131.397,ops/s(256^2),566
+direct3d11,rotozoom,"zoom x2",2497.633,ops/s(256^2),1249
+direct3d11,rotozoom,"zoom x2 smooth",453.439,ops/s(256^2),227
+direct3d11,rotozoom,"zoom x0.5 smooth",7707.502,ops/s(256^2),3854
+direct3d11,imagefilter,"Add",814.700,MB/s,408
+direct3d11,imagefilter,"Mean",1996.631,MB/s,999
+direct3d11,imagefilter,"AbsDiff",21004.975,MB/s,10503
+direct3d11,imagefilter,"Mult",819.963,MB/s,410
+direct3d11,imagefilter,"AddByte",769.161,MB/s,385
+direct3d11,imagefilter,"ShiftRight",2178.712,MB/s,1090
+direct3d11,imagefilter,"BinarizeUsingThreshold",47585.438,MB/s,23793
+direct3d11,imagefilter,"NormalizeLinear",566.380,MB/s,284

@@ -16,6 +16,7 @@ INPUT                  = @PROJECT_SOURCE_DIR@/README.md \
                          @PROJECT_SOURCE_DIR@/SDL3_imageFilter.h \
                          @PROJECT_SOURCE_DIR@/SDL3_imageFilter.c \
                          @PROJECT_SOURCE_DIR@/docs/BUILDING.md \
+                         @PROJECT_SOURCE_DIR@/docs/MIGRATION.md \
                          @PROJECT_SOURCE_DIR@/docs/PERFORMANCE.md \
                          @PROJECT_SOURCE_DIR@/docs/CODE_REVIEW.md \
                          @PROJECT_SOURCE_DIR@/CHANGELOG.md
