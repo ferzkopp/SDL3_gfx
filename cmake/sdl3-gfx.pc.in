@@ -9,5 +9,5 @@ URL: @PROJECT_HOMEPAGE_URL@
 Version: @PROJECT_VERSION@
 Requires: sdl3 >= @SDL3GFX_SDL_REQUIRED_VERSION@
 Libs: -L${libdir} -l@SDL3GFX_PC_LIB@
-Libs.private: -lm
+Libs.private:@SDL3GFX_PC_LIBS_PRIVATE@
 Cflags: -I${includedir} -I${includedir}/SDL3_gfx

@@ -15,6 +15,7 @@ project(SDL3_gfx
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
+include(CheckLibraryExists)
 
 set(SDL3GFX_SDL_REQUIRED_VERSION 3.2.0)
 
@@ -142,6 +143,7 @@ set(SDL3GFX_TARGETS)
 
 function(sdl3gfx_configure_library target)
     target_sources(${target} PRIVATE ${SDL3GFX_SOURCES} ${SDL3GFX_PUBLIC_HEADERS})
+    check_library_exists(m sin "" HAVE_LIBM)
     target_include_directories(${target} PUBLIC
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
@@ -149,7 +151,7 @@ function(sdl3gfx_configure_library target)
     target_link_libraries(${target}
         PUBLIC ${SDL3GFX_SDL_TARGET}
         PRIVATE $<BUILD_INTERFACE:sdl3gfx_build_flags>)
-    if(UNIX)
+    if(HAVE_LIBM)
         target_link_libraries(${target} PRIVATE m)
     endif()
     set_target_properties(${target} PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -268,6 +270,10 @@ if(SDL3GFX_INSTALL)
     set(SDL3GFX_PC_LIB SDL3_gfx)
     if(NOT SDL3GFX_SHARED AND MSVC)
         set(SDL3GFX_PC_LIB SDL3_gfx-static)
+    endif()
+    set(SDL3GFX_PC_LIBS_PRIVATE "")
+    if(HAVE_LIBM)
+        set(SDL3GFX_PC_LIBS_PRIVATE " -lm")
     endif()
     configure_file(cmake/sdl3-gfx.pc.in "${PROJECT_BINARY_DIR}/sdl3-gfx.pc" @ONLY)
     install(FILES "${PROJECT_BINARY_DIR}/sdl3-gfx.pc" DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
